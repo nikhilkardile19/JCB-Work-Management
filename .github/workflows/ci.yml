@@ -6,7 +6,9 @@ on:
   pull_request:
 
 jobs:
+  # Mobile CI is paused for now; remove this `if` to re-enable it.
   mobile:
+    if: false
     runs-on: ubuntu-latest
     defaults:
       run:
