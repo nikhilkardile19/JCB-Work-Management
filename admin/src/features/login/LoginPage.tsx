@@ -59,7 +59,7 @@ export function LoginPage() {
     <div className="login">
       <div className="login-panel">
         <div className="login-brand">
-          <img className="brand-mark" src={logoUrl} alt="" width={56} height={56} />
+          <img className="brand-mark" src={logoUrl} alt="" width={64} height={64} />
           <span>
             <span className="brand-accent">JCB</span> Works
           </span>
@@ -125,8 +125,12 @@ export function LoginPage() {
         </form>
 
         <p className="login-note">
-          <Icon name="lock" size={16} />
-          Access is restricted to authorized developer administrators. All actions are audited.
+          <Icon name="lock" />
+          <span>
+            Access is restricted to authorized developer administrators.
+            <br />
+            All actions are audited.
+          </span>
         </p>
       </div>
       <div className="login-art" aria-hidden="true" />
