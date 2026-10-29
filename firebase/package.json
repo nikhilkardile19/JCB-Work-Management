@@ -1,0 +1,18 @@
+{
+  "name": "jcb-firebase",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:rules": "firebase emulators:exec --only firestore --project demo-jcb-rules \"vitest run\"",
+    "emulators": "firebase emulators:start --project demo-jcb-rules",
+    "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes --project jcb-work-management",
+    "test:functions": "firebase emulators:exec --only firestore,auth --project demo-jcb-fn \"npm --prefix functions test\"",
+    "deploy:functions": "npm --prefix functions run build && firebase deploy --only functions --project jcb-work-management"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "firebase": "^13.1.0",
+    "firebase-tools": "^15.34.2",
+    "vitest": "^5.0.5"
+  }
+}

@@ -1,0 +1,9 @@
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.dash-activity h2 { font-size: var(--fs-lg); }
+.stat-link { color: inherit; text-decoration: none; display: block; border-radius: var(--radius-lg); }
+.stat-link:hover .card { border-color: var(--c-primary); }

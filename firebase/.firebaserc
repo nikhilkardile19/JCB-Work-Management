@@ -1,0 +1,6 @@
+{
+  "projects": {
+    "default": "jcb-work-management",
+    "dev": "jcb-work-management"
+  }
+}

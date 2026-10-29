@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "192106131234",
+    "project_id": "jcb-work-management",
+    "storage_bucket": "jcb-work-management.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:192106131234:android:1984b6944337ff9e21bf7b",
+        "android_client_info": {
+          "package_name": "com.app.jcb_work_management"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC7YU9rDWNwOHJo1qq7IlbG41ShJlT0dbw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

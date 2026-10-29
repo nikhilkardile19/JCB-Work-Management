@@ -1,0 +1,67 @@
+/* Design tokens — mirror mobile/lib/core/theme/app_tokens.dart. */
+:root {
+  --c-amber: #f5b400;
+  --c-amber-deep: #7a5900;
+  --c-graphite: #1c1e21;
+
+  --c-bg: #f7f6f2;
+  --c-surface: #ffffff;
+  --c-surface-2: #f1efe9;
+  --c-border: #e3e0d8;
+  --c-text: #1c1e21;
+  --c-text-muted: #5f6368;
+  --c-primary: var(--c-amber);
+  --c-on-primary: var(--c-graphite);
+  --c-focus: #1565c0;
+
+  --c-success: #1e8e4e;
+  --c-warning: #d9730d;
+  --c-danger: #c62828;
+  --c-info: #1565c0;
+
+  --sidebar-bg: var(--c-graphite);
+  --sidebar-text: #c9ccd1;
+  --sidebar-active: #ffffff;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.06), 0 1px 1px rgb(0 0 0 / 0.04);
+  --shadow-2: 0 10px 30px rgb(28 30 33 / 0.08);
+
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --fs-sm: 13px;
+  --fs-md: 15px;
+  --fs-lg: 18px;
+  --fs-xl: 24px;
+  --fs-xxl: 32px;
+
+  --dur-fast: 150ms;
+  --sidebar-w: 248px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-bg: #121315;
+    --c-surface: #1b1d20;
+    --c-surface-2: #24272b;
+    --c-border: #33373c;
+    --c-text: #eceef0;
+    --c-text-muted: #a0a6ad;
+    --c-focus: #6fa8ff;
+    --sidebar-bg: #0c0d0e;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; }
+}

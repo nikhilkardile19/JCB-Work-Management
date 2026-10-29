@@ -1,0 +1,304 @@
+rules_version = '2';
+
+// Default-deny. Anything not matched below is refused.
+// Data model: docs/adr/0001-architecture-baseline.md, sprint doc §5.4.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // Developer admins are an allowlist of docs created only from the
+    // Firebase console / Admin SDK — never by a client.
+    function isDevAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/developerAdmins/$(request.auth.uid));
+    }
+
+    function memberDoc(companyId) {
+      return /databases/$(database)/documents/companies/$(companyId)/companyUsers/$(request.auth.uid);
+    }
+
+    function isMember(companyId) {
+      return signedIn()
+        && exists(memberDoc(companyId))
+        && get(memberDoc(companyId)).data.status == 'active';
+    }
+
+    function hasRole(companyId, roles) {
+      return isMember(companyId) && get(memberDoc(companyId)).data.role in roles;
+    }
+
+    function companyActive(companyId) {
+      return get(/databases/$(database)/documents/companies/$(companyId)).data.status == 'active';
+    }
+
+    function roleOf(companyId) {
+      return get(memberDoc(companyId)).data.role;
+    }
+
+    // --- Synced business data ------------------------------------------------
+    // Layout: companies/{companyId}/{collection}/{id}. Every write carries
+    // sync metadata: a revision that must advance by exactly one (optimistic
+    // concurrency — two devices can't silently overwrite each other), the
+    // server time, and the pushing user. Records are never deleted; deletion
+    // is a `deletedAt` tombstone.
+    function syncMeta(companyId, docId) {
+      let d = request.resource.data;
+      return d.id == docId
+        && d.companyId == companyId
+        && d.pushedBy == request.auth.uid
+        && d.serverUpdatedAt == request.time
+        && d.rev == (resource == null ? 1 : resource.data.rev + 1);
+    }
+
+    function onlyChanged(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+        keys.concat(['rev', 'serverUpdatedAt', 'pushedBy', 'deviceId', 'updatedAt', 'updatedBy', 'version']));
+    }
+
+    // The write must come from an active device registered to this user, on
+    // a license that is active and within its dates. A revoked device or an
+    // expired/suspended license is cut off as soon as it reconnects.
+    function deviceLicensed(companyId) {
+      let device = get(/databases/$(database)/documents/companies/$(companyId)/authorizedDevices/$(request.resource.data.deviceId));
+      let license = get(/databases/$(database)/documents/companies/$(companyId)/licenses/$(device.data.licenseId));
+      return device.data.status == 'active'
+        && device.data.userId == request.auth.uid
+        && license.data.status == 'active'
+        && license.data.validFrom <= request.time
+        && license.data.validUntil > request.time;
+    }
+
+    function writer(companyId, roles) {
+      return isMember(companyId) && companyActive(companyId) && roleOf(companyId) in roles;
+    }
+
+    function isMaster(c) {
+      return c in ['clients', 'sites', 'machines', 'operators', 'petrolPumps'];
+    }
+
+    function validMaster() {
+      let d = request.resource.data;
+      return d.name is string && d.name.size() > 0 && d.name.size() <= 120 && d.isActive is bool;
+    }
+
+    function validWorkLog() {
+      let d = request.resource.data;
+      return d.startReading is int && d.startReading >= 0
+        && (d.endReading == null || (d.endReading >= d.startReading && d.workingHours == d.endReading - d.startReading))
+        && d.status in ['draft', 'submitted', 'approved', 'rejected', 'invoiced', 'cancelled']
+        && (d.entryMode == 'photo' || d.status == 'draft' || d.manualReason is string);
+    }
+
+    // Mirrors WorkLogPolicy (mobile/lib/features/work/domain/work_log.dart).
+    function workLogWrite(companyId) {
+      let d = request.resource.data;
+      let uid = request.auth.uid;
+      let before = resource == null ? null : resource.data.status;
+      let unbilled = d.get('invoiceId', null) == null;
+      return validWorkLog() && (
+        // Owner/admin: anything, except that an invoiced log only changes
+        // through its invoice (finalize, or cancellation releasing it).
+        (writer(companyId, ['owner', 'admin'])
+            && (before != 'invoiced'
+                || (d.status in ['invoiced', 'approved'] && onlyChanged(['status', 'invoiceId']))))
+        // Managers: create and review; never touch approved or billed logs.
+        || (writer(companyId, ['manager'])
+            && (before == null || before in ['draft', 'submitted', 'rejected'])
+            && d.status != 'invoiced' && unbilled)
+        // Operators: only their own unapproved logs; can't approve or bill.
+        || (writer(companyId, ['operator'])
+            && d.createdBy == uid
+            && (before == null || (resource.data.createdBy == uid && before in ['draft', 'rejected']))
+            && d.status in ['draft', 'submitted', 'cancelled'] && unbilled)
+        // Accounts: only invoice reservation/state of approved logs.
+        || (writer(companyId, ['accounts']) && before in ['approved', 'invoiced']
+            && onlyChanged(['status', 'invoiceId'])
+            && d.status in ['approved', 'invoiced'])
+      );
+    }
+
+    function fuelWrite(companyId) {
+      let d = request.resource.data;
+      let uid = request.auth.uid;
+      return d.litresCl is int && d.litresCl > 0
+        && d.pricePerLitrePaise is int && d.pricePerLitrePaise >= 0
+        && d.totalPaise == math.floor((d.litresCl * d.pricePerLitrePaise + 50) / 100)
+        && (writer(companyId, ['owner', 'admin'])
+            || (writer(companyId, ['manager', 'operator'])
+                && d.createdBy == uid
+                && (resource == null || resource.data.createdBy == uid)));
+    }
+
+    function invoiceWrite(companyId, docId) {
+      let d = request.resource.data;
+      let issued = get(/databases/$(database)/documents/companies/$(companyId)/invoiceNumbers/$(docId));
+      return writer(companyId, ['owner', 'admin', 'accounts'])
+        && d.discountPaise is int && d.discountPaise >= 0 && d.totalPaise >= 0
+        && d.totalPaise == d.subtotalPaise - d.discountPaise
+        && (
+          // Drafts are freely editable but carry no number.
+          (d.status == 'draft' && d.invoiceNumber == null
+            && (resource == null || resource.data.status == 'draft'))
+          // Finalizing: the number must be the one the server issued.
+          || (d.status == 'finalized'
+            && (resource == null || resource.data.status == 'draft')
+            && d.invoiceNumber == issued.data.invoiceNumber)
+          // Finalized invoices change only by cancellation.
+          || (resource != null && resource.data.status == 'finalized'
+            && d.status == 'cancelled' && d.cancelReason is string
+            && onlyChanged(['status', 'cancelledAt', 'cancelledBy', 'cancelReason']))
+          // Re-sending identical content (lost reply) is harmless.
+          || (resource != null && onlyChanged([]))
+        );
+    }
+
+    function paymentWrite(companyId) {
+      let d = request.resource.data;
+      return writer(companyId, ['owner', 'admin', 'accounts']) && (
+        (resource == null && d.amountPaise is int && d.amountPaise > 0 && d.reversedAt == null)
+        // After recording, a payment can only be reversed (with a reason).
+        || (resource != null && resource.data.reversedAt == null
+            && d.reverseReason is string
+            && onlyChanged(['reversedAt', 'reversedBy', 'reverseReason']))
+        || (resource != null && onlyChanged([]))
+      );
+    }
+
+    function writeAllowed(companyId, collection, docId) {
+      return syncMeta(companyId, docId) && deviceLicensed(companyId) && (
+        (isMaster(collection) && writer(companyId, ['owner', 'admin']) && validMaster())
+        || (collection == 'workLogs' && workLogWrite(companyId))
+        || (collection == 'fuelEntries' && fuelWrite(companyId))
+        || (collection == 'invoices' && invoiceWrite(companyId, docId))
+        || (collection == 'payments' && paymentWrite(companyId))
+        // History is append-only.
+        || (collection == 'auditLogs' && resource == null && isMember(companyId) && companyActive(companyId))
+      );
+    }
+
+    function readAllowed(companyId, collection) {
+      return (isMaster(collection) || collection in ['workLogs', 'fuelEntries', 'auditLogs']) && isMember(companyId)
+        || collection in ['invoices', 'payments'] && hasRole(companyId, ['owner', 'admin', 'manager', 'accounts']);
+    }
+
+    function optionalString(data, field, maxLen) {
+      return !(field in data) || data[field] == null
+        || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    // Keep in sync with mobile/lib/features/company/domain/company_validators.dart
+    function validCompanyProfile(d) {
+      return d.name is string && d.name.size() >= 2 && d.name.size() <= 120
+        && d.contactPerson is string && d.contactPerson.size() >= 1 && d.contactPerson.size() <= 120
+        && d.phone is string && d.phone.size() >= 10 && d.phone.size() <= 20
+        && d.address is string && d.address.size() >= 5 && d.address.size() <= 500
+        && d.invoicePrefix is string && d.invoicePrefix.matches('^[A-Z0-9-]{1,10}$')
+        && optionalString(d, 'email', 200)
+        && optionalString(d, 'gstin', 15)
+        // Lower-cased copy of the name for admin search.
+        && (!('nameLower' in d) || d.nameLower == d.name.lower());
+    }
+
+    // Server-written license/device history; developer admins can read it.
+    match /auditEvents/{eventId} {
+      allow read: if isDevAdmin();
+      allow write: if false;
+    }
+
+    match /developerAdmins/{uid} {
+      allow read: if isSelf(uid);
+      allow write: if false;
+    }
+
+    match /companies/{companyId} {
+      allow read: if isMember(companyId) || isDevAdmin();
+
+      // Self-registration. Must be written in the same batch as the owner's
+      // companyUsers doc; always starts pending (approval is server-side).
+      allow create: if signedIn()
+        && validCompanyProfile(request.resource.data)
+        && request.resource.data.keys().hasOnly([
+             'id', 'name', 'nameLower', 'contactPerson', 'phone', 'email', 'address', 'gstin',
+             'invoicePrefix', 'currency', 'status', 'ownerUid', 'createdBy',
+             'updatedBy', 'createdAt', 'updatedAt', 'schemaVersion'])
+        && request.resource.data.id == companyId
+        && request.resource.data.status == 'pending'
+        && request.resource.data.currency == 'INR'
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/companies/$(companyId)/companyUsers/$(request.auth.uid)).data.role == 'owner';
+
+      // Owners/admins may edit profile fields only — never status, owner or id.
+      allow update: if hasRole(companyId, ['owner', 'admin'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+             'name', 'nameLower', 'contactPerson', 'phone', 'email', 'address', 'gstin',
+             'invoicePrefix', 'updatedBy', 'updatedAt'])
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time
+        && validCompanyProfile(request.resource.data);
+
+      allow delete: if false;
+
+      match /companyUsers/{userId} {
+        allow read: if isSelf(userId) || isMember(companyId) || isDevAdmin();
+
+        // Only the owner's own membership, only while the company is being
+        // created in the same batch. Users can never grant themselves roles
+        // in an existing company.
+        allow create: if isSelf(userId)
+          && !exists(/databases/$(database)/documents/companies/$(companyId))
+          && getAfter(/databases/$(database)/documents/companies/$(companyId)).data.ownerUid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['uid', 'companyId', 'email', 'role', 'status', 'createdAt'])
+          && request.resource.data.uid == userId
+          && request.resource.data.companyId == companyId
+          && request.resource.data.role == 'owner'
+          && request.resource.data.status == 'active'
+          && request.resource.data.createdAt == request.time;
+
+        // Role changes and invitations go through Cloud Functions (Sprint 10).
+        allow update, delete: if false;
+      }
+
+      // Replacement requests are written only by Cloud Functions. The
+      // requester follows their own; owners/admins see the company's.
+      match /deviceReplacementRequests/{requestId} {
+        allow read: if signedIn() && resource.data.requestedBy == request.auth.uid
+          || hasRole(companyId, ['owner', 'admin']);
+        allow write: if false;
+      }
+
+      match /{collection}/{docId} {
+        allow read: if readAllowed(companyId, collection) || isDevAdmin() && collection != 'companyUsers';
+        allow create, update: if writeAllowed(companyId, collection, docId);
+        allow delete: if false;
+      }
+    }
+
+    // Lets a user find their own memberships across companies
+    // (collectionGroup('companyUsers').where('uid', '==', uid)).
+    match /{path=**}/companyUsers/{userId} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid || isDevAdmin();
+    }
+
+    // Cross-company lists in the developer admin portal.
+    match /{path=**}/licenses/{licenseId} {
+      allow read: if isDevAdmin();
+    }
+
+    match /{path=**}/authorizedDevices/{deviceId} {
+      allow read: if isDevAdmin();
+    }
+
+    match /{path=**}/deviceReplacementRequests/{requestId} {
+      allow read: if isDevAdmin();
+    }
+  }
+}
