@@ -94,6 +94,17 @@ describe('route protection', () => {
     expect(await screen.findByText('Incorrect email or password.')).toBeInTheDocument()
   })
 
+  it('shows and hides the password', async () => {
+    renderAt('/login')
+    await loginHeading()
+    const input = screen.getByLabelText('Password')
+    expect(input).toHaveAttribute('type', 'password')
+    await userEvent.click(screen.getByRole('button', { name: 'Show password' }))
+    expect(input).toHaveAttribute('type', 'text')
+    await userEvent.click(screen.getByRole('button', { name: 'Hide password' }))
+    expect(input).toHaveAttribute('type', 'password')
+  })
+
   it('signs in, returns to the requested page, navigates and signs out', async () => {
     renderAt('/licenses')
     await loginHeading()

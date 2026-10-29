@@ -4,7 +4,11 @@
     "indexes": "firestore.indexes.json"
   },
   "hosting": {
-    "public": "../admin/dist",
+    "public": "admin-dist",
+    "predeploy": [
+      "grep -q '^VITE_FIREBASE_API_KEY=.' \"$PROJECT_DIR/../admin/.env.local\" || { echo 'admin/.env.local needs the Web app config (see admin/.env.example)'; exit 1; }",
+      "npm --prefix \"$PROJECT_DIR/../admin\" run build -- --outDir \"$PROJECT_DIR/admin-dist\" --emptyOutDir"
+    ],
     "ignore": [
       "firebase.json",
       "**/.*"
@@ -55,7 +59,7 @@
         ]
       },
       {
-        "source": "/index.html",
+        "regex": "^/([^.]*|index\\.html)$",
         "headers": [
           {
             "key": "Cache-Control",

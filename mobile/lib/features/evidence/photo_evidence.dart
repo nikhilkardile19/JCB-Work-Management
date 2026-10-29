@@ -39,24 +39,30 @@ class PhotoEvidence {
 /// time and best-effort location. Returns null if cancelled or refused
 /// (after explaining how to enable the camera). Never throws for permission
 /// problems.
+///
+/// [onSaving] runs once the photo is taken and any location question is
+/// answered: callers show progress from then on, so nothing spins behind
+/// the camera or the dialog.
 Future<PhotoEvidence?> captureEvidencePhoto(
   BuildContext context,
   WidgetRef ref, {
   required String companyId,
+  VoidCallback? onSaving,
 }) async {
   try {
     final file = await ref.read(photoCaptureServiceProvider).capture();
     if (file == null) return null;
+    final location = ref.read(locationServiceProvider);
+    final useLocation =
+        !await location.needsPermissionPrompt() ||
+        (context.mounted && await _explainLocation(context, ref));
+    onSaving?.call();
     final rel = await ref
         .read(photoStoreProvider)
         .keep(file, companyId: companyId, name: const Uuid().v4());
-    final location = ref.read(locationServiceProvider);
-    final fix =
-        await location.needsPermissionPrompt() &&
-            context.mounted &&
-            !await _explainLocation(context, ref)
-        ? const LocationFix(LocationStatus.denied)
-        : await location.current();
+    final fix = useLocation
+        ? await location.current()
+        : const LocationFix(LocationStatus.denied);
     if (context.mounted && fix.status != LocationStatus.captured) {
       showAppSnackBar(
         context,

@@ -4,6 +4,10 @@ enum AppEnv { dev, staging, prod }
 abstract final class AppConfig {
   static const appName = 'JCB Works';
 
+  /// Shown in About and support details. Keep in step with `version:` in
+  /// pubspec.yaml.
+  static const version = '1.0.0';
+
   static const _envName = String.fromEnvironment(
     'APP_ENV',
     defaultValue: 'dev',

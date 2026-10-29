@@ -1,15 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app/routes.dart';
+import '../../../core/config/app_config.dart';
 import '../../../core/connectivity/connectivity_provider.dart';
+import '../../../core/errors/error_log.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/app_card.dart';
 import '../../../core/widgets/dialogs.dart';
 import '../../../core/widgets/sync_indicator.dart';
+import '../../../data/local/database_provider.dart';
+import '../../auth/application/auth_providers.dart';
+import '../../auth/data/auth_repository.dart';
+import '../../company/application/company_providers.dart';
+import '../../company/domain/company.dart';
+import '../../license/application/license_controller.dart';
+import '../../license/domain/license.dart';
+import '../../license/presentation/license_widgets.dart';
 import '../application/sync_controller.dart';
 import '../data/sync_engine.dart';
 
@@ -158,11 +169,251 @@ class SyncScreen extends ConsumerWidget {
               ],
             ),
           ),
+          const SectionHeader('This phone'),
+          const _PhoneCard(),
+          const SectionHeader('Recent errors'),
+          const _RecentErrors(),
           const SizedBox(height: AppSpace.lg),
           Text(
             'Meter photos, fuel receipts and invoice PDFs stay on this phone and are not uploaded. '
             'Keep the phone safe, or share important PDFs, until cloud backup is added.',
             style: theme.textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+final _fullDate = DateFormat('d MMM yyyy, h:mm a');
+
+String _at(int epochMs) =>
+    _fullDate.format(DateTime.fromMillisecondsSinceEpoch(epochMs));
+
+/// Plain-text state of this phone for a support request (sprint doc §4.13
+/// "device and sync status for troubleshooting"). It only leaves the phone
+/// if the user pastes it somewhere.
+String supportDetails({
+  required AppUser? user,
+  required CompanyMembership? membership,
+  required String? deviceId,
+  required LicenseAccess? license,
+  required LicenseSnapshot? licenseCheck,
+  required SyncState sync,
+  required int? lastSyncAt,
+  required int pending,
+  required int issues,
+  required List<ErrorLogEntry> errors,
+}) => [
+  '${AppConfig.appName} ${AppConfig.version} (${AppConfig.env.name}), Android',
+  if (membership != null)
+    'Company: ${membership.company.name} (${membership.company.id})',
+  if (user != null)
+    'User: ${user.email} (${user.uid})'
+        '${membership == null ? '' : ', ${membership.role.label}'}',
+  'Device ID: ${deviceId ?? 'unknown'}',
+  'License: ${license == null ? 'unknown' : licenseLook(license).$1}'
+      '${licenseCheck == null ? '' : ', last checked ${_at(licenseCheck.lastValidatedAt)}'}',
+  'Sync: ${sync.look.$1}'
+      '${lastSyncAt == null ? ', never synced' : ', last synced ${_at(lastSyncAt)}'}',
+  'Waiting to upload: $pending, needing attention: $issues',
+  '',
+  if (errors.isEmpty)
+    'No recent errors.'
+  else ...[
+    'Recent errors (${errors.length}):',
+    for (final e in errors) ...[
+      '- ${_at(e.at)}${e.context == null ? '' : ' · ${e.context}'}',
+      '  ${e.message}',
+      if (e.stack != null)
+        for (final line in e.stack!.split('\n')) '  $line',
+    ],
+  ],
+].join('\n');
+
+/// Who and what this phone is, with a summary to send to support.
+class _PhoneCard extends ConsumerWidget {
+  const _PhoneCard();
+
+  Future<void> _copy(BuildContext context, WidgetRef ref) async {
+    final text = supportDetails(
+      user: ref.read(authStateProvider).value,
+      membership: ref.read(currentMembershipProvider),
+      deviceId: await ref.read(installationIdProvider.future),
+      license: ref.read(licenseAccessProvider).value,
+      licenseCheck: ref.read(licenseControllerProvider).value,
+      sync: ref.read(appSyncStateProvider),
+      lastSyncAt: ref.read(syncControllerProvider).lastSyncAt,
+      pending: ref.read(pendingSyncCountProvider).value ?? 0,
+      issues: (ref.read(syncIssuesProvider).value ?? const []).length,
+      errors: await ref.read(errorLogProvider).entries(),
+    );
+    await Clipboard.setData(ClipboardData(text: text));
+    if (context.mounted) {
+      showAppSnackBar(
+        context,
+        'Copied. Paste it into a message to support.',
+        tone: StatusTone.success,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(authStateProvider).value;
+    final membership = ref.watch(currentMembershipProvider);
+    final deviceId = ref.watch(installationIdProvider).value;
+    final license = ref.watch(licenseAccessProvider).value;
+    return AppCard(
+      padding: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.person_outline),
+            title: Text(user?.email ?? 'Not signed in'),
+            subtitle: Text(
+              [?membership?.role.label, ?membership?.company.name].join(' · '),
+            ),
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.phone_android),
+            title: const Text('Device ID'),
+            subtitle: Text(
+              deviceId == null ? '…' : shortDeviceId(deviceId),
+              key: const Key('sync_device_id'),
+            ),
+          ),
+          const Divider(),
+          ListTile(
+            key: const Key('sync_license'),
+            leading: const Icon(Icons.key_outlined),
+            title: const Text('License'),
+            subtitle: Align(
+              alignment: Alignment.centerLeft,
+              child: license == null
+                  ? const Text('Checking…')
+                  : LicenseChip(license),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push(Routes.license),
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('App version'),
+            subtitle: Text('${AppConfig.version} (${AppConfig.env.name})'),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpace.lg,
+              AppSpace.xs,
+              AppSpace.lg,
+              AppSpace.lg,
+            ),
+            child: AppButton(
+              key: const Key('sync_copy_support'),
+              label: 'Copy details for support',
+              icon: Icons.copy_outlined,
+              variant: AppButtonVariant.secondary,
+              onPressed: () => _copy(context, ref),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Unexpected errors recorded on this phone (newest first).
+class _RecentErrors extends ConsumerWidget {
+  const _RecentErrors();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final errors =
+        ref.watch(recentErrorsProvider).value ?? const <ErrorLogEntry>[];
+    if (errors.isEmpty) {
+      return AppCard(
+        key: const Key('sync_no_errors'),
+        child: Row(
+          children: [
+            Icon(
+              Icons.check_circle_outline,
+              color: AppStatusColors.of(context).success,
+            ),
+            const SizedBox(width: AppSpace.md),
+            const Expanded(child: Text('No errors recorded on this phone.')),
+          ],
+        ),
+      );
+    }
+    return AppCard(
+      padding: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final (i, e) in errors.indexed) ...[
+            if (i > 0) const Divider(),
+            ExpansionTile(
+              key: Key('sync_error_$i'),
+              shape: const Border(),
+              collapsedShape: const Border(),
+              leading: Icon(
+                Icons.error_outline,
+                color: theme.colorScheme.error,
+              ),
+              title: Text(
+                e.message,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text([_ago(e.at), ?e.context].join(' · ')),
+              expandedCrossAxisAlignment: CrossAxisAlignment.start,
+              childrenPadding: const EdgeInsets.fromLTRB(
+                AppSpace.lg,
+                0,
+                AppSpace.lg,
+                AppSpace.lg,
+              ),
+              children: [
+                SelectableText(e.message),
+                if (e.stack != null) ...[
+                  const SizedBox(height: AppSpace.sm),
+                  SelectableText(
+                    e.stack!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+          const Divider(),
+          Padding(
+            padding: const EdgeInsets.all(AppSpace.sm),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                key: const Key('sync_clear_errors'),
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Clear list'),
+                onPressed: () async {
+                  final ok = await showConfirmDialog(
+                    context,
+                    title: 'Clear the error list?',
+                    message:
+                        'If support is looking into a problem, copy the '
+                        'details for them first.',
+                    confirmLabel: 'Clear',
+                  );
+                  if (ok) await ref.read(errorLogProvider).clear();
+                },
+              ),
+            ),
           ),
         ],
       ),

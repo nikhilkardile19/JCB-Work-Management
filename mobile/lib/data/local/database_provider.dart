@@ -8,3 +8,11 @@ final appDatabaseProvider = Provider<AppDatabase>((ref) {
   ref.onDispose(db.close);
   return db;
 });
+
+/// This app installation's ID, which registers the phone on the license.
+final installationIdProvider = FutureProvider<String>(
+  (ref) => ref.watch(appDatabaseProvider).installationId(),
+);
+
+/// The installation ID as shown to users and support (first 8 characters).
+String shortDeviceId(String id) => id.substring(0, 8).toUpperCase();

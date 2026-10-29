@@ -7,7 +7,8 @@
     "emulators": "firebase emulators:start --project demo-jcb-rules",
     "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes --project jcb-work-management",
     "test:functions": "firebase emulators:exec --only firestore,auth --project demo-jcb-fn \"npm --prefix functions test\"",
-    "deploy:functions": "npm --prefix functions run build && firebase deploy --only functions --project jcb-work-management"
+    "deploy:functions": "npm --prefix functions run build && firebase deploy --only functions --project jcb-work-management",
+    "deploy:hosting": "firebase deploy --only hosting --project jcb-work-management"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^6.0.0",

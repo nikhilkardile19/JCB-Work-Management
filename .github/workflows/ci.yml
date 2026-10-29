@@ -62,3 +62,30 @@ jobs:
       - run: npm ci --prefix functions
       - run: npm --prefix functions run build
       - run: npm run test:functions
+
+  # Publishes the admin portal to Firebase Hosting once its checks pass on main.
+  deploy-hosting:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: admin
+    runs-on: ubuntu-latest
+    concurrency: deploy-hosting
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            admin/package-lock.json
+            firebase/package-lock.json
+      - run: npm ci --prefix admin
+      - run: npm ci --prefix firebase
+      - name: Write admin/.env.local
+        run: printf '%s\n' "$ADMIN_ENV_LOCAL" > admin/.env.local
+        env:
+          ADMIN_ENV_LOCAL: ${{ secrets.ADMIN_ENV_LOCAL }}
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      - run: npm run deploy:hosting
+        working-directory: firebase

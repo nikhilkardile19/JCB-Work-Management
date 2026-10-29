@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app.dart';
 import 'app/startup_error_app.dart';
+import 'core/errors/error_log.dart';
 import 'firebase_options.dart';
 
 Future<void> main() async {
@@ -16,5 +17,9 @@ Future<void> main() async {
     runApp(StartupErrorApp(error: e));
     return;
   }
-  runApp(const ProviderScope(child: JcbApp()));
+  final container = ProviderContainer();
+  recordUncaughtErrors(container.read(errorLogProvider));
+  runApp(
+    UncontrolledProviderScope(container: container, child: const JcbApp()),
+  );
 }

@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/connectivity/connectivity_provider.dart';
+import '../../../core/errors/error_log.dart';
 import '../../../data/local/database_provider.dart';
 import '../../billing/domain/invoice.dart';
 import '../../license/application/license_controller.dart';
@@ -80,9 +81,16 @@ class SyncController extends Notifier<SyncStatus> {
       ref.listen(isOnlineProvider, (prev, next) {
         if (next.value == true && prev?.value != true) unawaited(syncNow());
       });
+      // Uploads resume as soon as the license allows changes again.
+      ref.listen(canWriteProvider, (prev, next) {
+        if (next && prev == false) unawaited(syncNow());
+      });
       final db = ref.watch(appDatabaseProvider);
-      final sub = db.tableUpdates().listen((_) {
-        if (_running) return;
+      final settings = db.appSettings.actualTableName;
+      final sub = db.tableUpdates().listen((updates) {
+        // Settings (license cache, sync cursors, error log) aren't synced;
+        // reacting to them would retry a failing sync every few seconds.
+        if (_running || updates.every((u) => u.table == settings)) return;
         _changeTimer?.cancel();
         _changeTimer = Timer(_debounce, () => unawaited(syncNow()));
       });
@@ -133,8 +141,9 @@ class SyncController extends Notifier<SyncStatus> {
       _failures++;
       state = state.copyWith(phase: SyncPhase.offline, message: e.message);
       _scheduleRetry();
-    } catch (e) {
+    } catch (e, stack) {
       _failures++;
+      unawaited(ref.read(errorLogProvider).record(e, stack, context: 'Sync'));
       state = state.copyWith(phase: SyncPhase.failed, message: '$e');
       _scheduleRetry();
     } finally {

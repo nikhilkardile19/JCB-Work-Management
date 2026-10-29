@@ -165,6 +165,9 @@ class _WorkLogFormState extends ConsumerState<_WorkLogForm> {
   ReadingContext _ctx = const ReadingContext();
   Map<String, String> _errors = {};
   bool? _capturingStart;
+
+  /// The photo is taken and being stored with its location.
+  bool _savingPhoto = false;
   String? _busy;
   bool _dirty = false;
 
@@ -292,6 +295,9 @@ class _WorkLogFormState extends ConsumerState<_WorkLogForm> {
         context,
         ref,
         companyId: widget.actor.companyId,
+        onSaving: () {
+          if (mounted) setState(() => _savingPhoto = true);
+        },
       );
       if (photo == null || !mounted) return;
       _sessionPhotos.add(photo.photoPath);
@@ -310,7 +316,12 @@ class _WorkLogFormState extends ConsumerState<_WorkLogForm> {
       setState(() => start ? _start = cap : _end = cap);
       _touch();
     } finally {
-      if (mounted) setState(() => _capturingStart = null);
+      if (mounted) {
+        setState(() {
+          _capturingStart = null;
+          _savingPhoto = false;
+        });
+      }
     }
   }
 
@@ -607,7 +618,7 @@ class _WorkLogFormState extends ConsumerState<_WorkLogForm> {
               capture: _start,
               controller: _startText,
               error: _errors['start'],
-              capturing: _capturingStart == true,
+              capturing: _savingPhoto && _capturingStart == true,
               busy: _capturingStart != null,
               lastReading: _ctx.lastReading,
               onCapture: () => _capture(start: true),
@@ -620,7 +631,7 @@ class _WorkLogFormState extends ConsumerState<_WorkLogForm> {
               capture: _end,
               controller: _endText,
               error: _errors['end'],
-              capturing: _capturingStart == false,
+              capturing: _savingPhoto && _capturingStart == false,
               busy: _capturingStart != null,
               helper:
                   'Add when the shift is over. You can save and finish later.',

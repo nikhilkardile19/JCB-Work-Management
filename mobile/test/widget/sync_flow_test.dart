@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jcb_work_management/features/company/domain/permissions.dart';
 import 'package:jcb_work_management/features/masters/data/masters_repository.dart';
@@ -138,6 +139,65 @@ void main() {
     await tapAndSettle(tester, find.byKey(const Key('sync_retry')));
     expect(find.text('Needs your attention'), findsNothing);
     expect(h.server.count(co, 'clients'), 1);
+    await unmount(tester);
+  });
+
+  testWidgets('unexpected errors are kept for support, copied and cleared', (
+    tester,
+  ) async {
+    final h = await pumpSync(tester);
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map)['text'] as String;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    await openSync(tester);
+    expect(
+      await scrollTo(tester, find.byKey(const Key('sync_no_errors'))),
+      findsOneWidget,
+    );
+    final deviceId = await h.db.installationId();
+    expect(
+      tester.widget<Text>(find.byKey(const Key('sync_device_id'))).data,
+      deviceId.substring(0, 8).toUpperCase(),
+    );
+
+    h.server.failWith = StateError('missing index');
+    await tapAndSettle(tester, find.byKey(const Key('sync_now')));
+    expect(find.textContaining('Could not reach the server'), findsOneWidget);
+    expect(
+      await scrollTo(tester, find.byKey(const Key('sync_error_0'))),
+      findsOneWidget,
+    );
+    expect(find.text('Bad state: missing index'), findsOneWidget);
+
+    await tapAndSettle(tester, find.byKey(const Key('sync_copy_support')));
+    expect(find.textContaining('Copied'), findsOneWidget);
+    expect(copied, contains('Company: Sai Earthmovers (co1)'));
+    expect(copied, contains('Device ID: $deviceId'));
+    expect(copied, contains('License: Active'));
+    expect(copied, contains('never synced'));
+    expect(copied, matches(RegExp(r'Waiting to upload: [1-9]')));
+    expect(copied, contains('· Sync\n  Bad state: missing index'));
+
+    await tapAndSettle(tester, find.byKey(const Key('sync_clear_errors')));
+    await tapAndSettle(tester, find.text('Clear'));
+    expect(
+      await scrollTo(tester, find.byKey(const Key('sync_no_errors'))),
+      findsOneWidget,
+    );
     await unmount(tester);
   });
 }

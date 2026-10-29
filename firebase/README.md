@@ -12,6 +12,16 @@ Project: **jcb-work-management** (single project used as `dev` until staging/pro
 | Deploy rules + indexes | `npx firebase login` once, then `npm run deploy:rules` |
 | Cloud Functions tests (emulator) | `npm install --prefix functions && npm run test:functions` |
 | Deploy Cloud Functions | `npm run deploy:functions` (needs the Blaze plan) |
+| Deploy admin portal (Hosting) | `npm run deploy:hosting` (builds `admin/` first; needs `admin/.env.local`) |
+
+Every push to `main` also deploys the admin portal automatically (CI job
+`deploy-hosting`, after the admin lint/tests/build pass). It needs two GitHub
+repository secrets (Settings → Secrets and variables → Actions):
+
+- `FIREBASE_SERVICE_ACCOUNT`: JSON key of a service account with the
+  **Firebase Hosting Admin** role (Google Cloud console → IAM & Admin →
+  Service accounts).
+- `ADMIN_ENV_LOCAL`: the full contents of `admin/.env.local`.
 
 The Firestore emulator uses port **8085** (8080 is taken on the dev machine).
 
@@ -33,7 +43,12 @@ The Firestore emulator uses port **8085** (8080 is taken on the dev machine).
 5. **Approving a company:** in the admin portal, Companies → Awaiting
    approval → open the company → Approve (a reason is required and logged).
 6. **Admin portal web app:** Project settings → Add app → Web. Copy the SDK
-   config into `admin/.env.local` (template: `admin/.env.example`).
+   config into `admin/.env.local` (template: `admin/.env.example`), or print
+   it with `npx firebase apps:sdkconfig WEB --project jcb-work-management`.
+   Then `npm run deploy:hosting`; the portal is served at
+   https://jcb-work-management.web.app. The deploy refuses to run while
+   `admin/.env.local` has no API key, so an unconfigured portal is never
+   published.
 7. **Invoice numbering:** upgrade the project to the **Blaze (pay-as-you-go)**
    plan (required for Cloud Functions; set a budget alert), then
    `npm run deploy:functions`. This deploys `allocateInvoiceNumber` in

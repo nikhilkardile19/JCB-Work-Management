@@ -115,6 +115,7 @@ void main() {
       expect(row.syncStatus, 'pending');
 
       await tapAndSettle(tester, find.text('Dashboard'));
+      await scrollTo(tester, find.byKey(const Key('dash_fuel')));
       expect(
         find.descendant(
           of: find.byKey(const Key('dash_fuel')),

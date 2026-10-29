@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' show PlatformDispatcher;
 
+import 'package:flutter/foundation.dart' show FlutterError;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local/app_database.dart';
@@ -67,7 +69,7 @@ class ErrorLog {
                 ? null
                 : _clip(stack.toString().split('\n').take(8).join('\n'), 1500),
           );
-          final list = [entry, ...await entries()].take(maxEntries);
+          final list = [entry, ...await _read()].take(maxEntries);
           await _db.writeSetting(
             _key,
             jsonEncode([for (final e in list) e.toJson()]),
@@ -89,13 +91,38 @@ class ErrorLog {
     }
   }
 
-  /// Newest first.
-  Future<List<ErrorLogEntry>> entries() async =>
+  /// Newest first, including errors still being written.
+  Future<List<ErrorLogEntry>> entries() async {
+    await _last;
+    return _read();
+  }
+
+  Future<List<ErrorLogEntry>> _read() async =>
       _decode(await _db.readSetting(_key));
 
   Stream<List<ErrorLogEntry>> watch() => _db.watchSetting(_key).map(_decode);
 
   Future<void> clear() => _db.deleteSetting(_key);
+}
+
+/// Also records uncaught Flutter framework and platform errors in [log],
+/// keeping the existing handling (console output in debug builds).
+void recordUncaughtErrors(ErrorLog log) {
+  final present = FlutterError.onError;
+  FlutterError.onError = (details) {
+    present?.call(details);
+    if (details.silent) return;
+    log.record(
+      details.exception,
+      details.stack,
+      context: details.context?.toDescription() ?? details.library,
+    );
+  };
+  final platform = PlatformDispatcher.instance.onError;
+  PlatformDispatcher.instance.onError = (error, stack) {
+    log.record(error, stack, context: 'Uncaught error');
+    return platform?.call(error, stack) ?? false;
+  };
 }
 
 final errorLogProvider = Provider<ErrorLog>(

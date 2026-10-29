@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:jcb_work_management/core/errors/error_log.dart';
 import 'package:jcb_work_management/data/local/app_database.dart';
+import 'package:jcb_work_management/features/reports/domain/reports.dart';
 
 import '../helpers/pump_app.dart';
 import 'billing_flow_test.dart' show seedBilling;
 import 'fuel_flow_test.dart' show seedFuelMasters;
+import 'reports_flow_test.dart' show pumpWithBilling;
 import 'work_flow_test.dart' show seedMasters;
 
 /// Small phone, large phone and tablet; normal and 2x text scale.
@@ -234,6 +237,37 @@ void main() {
         expect(tester.takeException(), isNull, reason: 'users');
         await tapAndSettle(tester, find.byKey(const Key('users_invite')));
         expect(tester.takeException(), isNull, reason: 'invite sheet');
+        await unmount(tester);
+      });
+
+      testWidgets('reports, sync and privacy fit at $label', (tester) async {
+        setView(tester);
+        final (h, _) = await pumpWithBilling(tester);
+        await tester.runAsync(
+          () => ErrorLog(h.db).record(
+            StateError('Unexpected response from the server ' * 5),
+            StackTrace.current,
+            context: 'Sync',
+          ),
+        );
+        await tapTab(tester, 'More');
+        await tapAndSettle(tester, find.byKey(const Key('more_reports')));
+        expect(tester.takeException(), isNull, reason: 'reports');
+        for (final kind in ReportKind.values) {
+          await tapAndSettle(tester, find.byKey(Key('report_${kind.name}')));
+          expect(tester.takeException(), isNull, reason: kind.name);
+          await tester.pageBack();
+          await settle(tester);
+        }
+        await tapAndSettle(tester, find.byKey(const Key('report_device_sync')));
+        await tapAndSettle(tester, find.byKey(const Key('sync_error_0')));
+        expect(tester.takeException(), isNull, reason: 'sync and errors');
+        await tester.pageBack();
+        await settle(tester);
+        await tester.pageBack();
+        await settle(tester);
+        await tapAndSettle(tester, find.byKey(const Key('more_privacy')));
+        expect(tester.takeException(), isNull, reason: 'privacy');
         await unmount(tester);
       });
     }

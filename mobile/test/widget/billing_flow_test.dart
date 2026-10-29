@@ -165,6 +165,7 @@ void main() {
     );
     expect(find.text('₹16,400.00'), findsWidgets);
     await tapTab(tester, 'Dashboard');
+    await scrollTo(tester, find.byKey(const Key('dash_outstanding')));
     expect(
       find.descendant(
         of: find.byKey(const Key('dash_outstanding')),

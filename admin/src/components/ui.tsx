@@ -33,14 +33,33 @@ export function TextField({
   label,
   error,
   hint,
+  icon,
+  end,
   ...rest
-}: InputHTMLAttributes<HTMLInputElement> & { label: string; error?: string | null; hint?: string }) {
+}: InputHTMLAttributes<HTMLInputElement> & {
+  label: string
+  error?: string | null
+  hint?: string
+  /** Leading icon inside the input. */
+  icon?: IconName
+  /** Trailing control inside the input, e.g. a show-password toggle. */
+  end?: ReactNode
+}) {
   const id = useId()
   const describedBy = error ? `${id}-err` : hint ? `${id}-hint` : undefined
+  const input = <input id={id} aria-invalid={!!error} aria-describedby={describedBy} {...rest} />
   return (
     <div className={`field${error ? ' field-error' : ''}`}>
       <label htmlFor={id}>{label}</label>
-      <input id={id} aria-invalid={!!error} aria-describedby={describedBy} {...rest} />
+      {icon || end ? (
+        <div className={`field-control${icon ? ' has-icon' : ''}${end ? ' has-end' : ''}`}>
+          {icon && <Icon name={icon} />}
+          {input}
+          {end && <span className="field-end">{end}</span>}
+        </div>
+      ) : (
+        input
+      )}
       {error ? (
         <p id={`${id}-err`} className="field-msg" role="alert">
           {error}

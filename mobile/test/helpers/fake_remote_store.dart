@@ -17,6 +17,9 @@ class FakeRemoteStore implements RemoteStore {
   /// Accept the next write but throw as if the reply never arrived.
   bool loseNextReply = false;
 
+  /// Thrown by every call: an unexpected error rather than a network one.
+  Object? failWith;
+
   String _key(String c, String col, String id) => '$c/$col/$id';
 
   Map<String, dynamic>? read(String companyId, String collection, String id) =>
@@ -49,6 +52,7 @@ class FakeRemoteStore implements RemoteStore {
     bool force = false,
   }) async {
     pushCalls++;
+    if (failWith case final e?) throw e;
     if (offline) throw const SyncUnavailable();
     if (rejectCollections.contains(collection)) {
       return const PushRejected('Refused by server rules');
@@ -82,6 +86,7 @@ class FakeRemoteStore implements RemoteStore {
     required SyncCursor? after,
     required int limit,
   }) async {
+    if (failWith case final e?) throw e;
     if (offline) throw const SyncUnavailable();
     final prefix = '$companyId/$collection/';
     final list =

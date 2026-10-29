@@ -24,7 +24,7 @@ SyncState recordSyncState(String syncStatus) => switch (syncStatus) {
   _ => SyncState.pending,
 };
 
-extension on SyncState {
+extension SyncStateLook on SyncState {
   (String, StatusTone, IconData) get look => switch (this) {
     SyncState.localOnly => (
       'Saved on device',

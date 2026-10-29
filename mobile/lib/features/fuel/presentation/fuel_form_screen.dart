@@ -135,6 +135,9 @@ class _FuelFormState extends ConsumerState<_FuelForm> {
   final _sessionPhotos = <String>{};
   Map<String, String> _errors = {};
   bool _capturing = false;
+
+  /// The receipt photo is taken and being stored with its location.
+  bool _savingReceipt = false;
   bool _saving = false;
   bool _dirty = false;
 
@@ -209,6 +212,9 @@ class _FuelFormState extends ConsumerState<_FuelForm> {
         context,
         ref,
         companyId: widget.actor.companyId,
+        onSaving: () {
+          if (mounted) setState(() => _savingReceipt = true);
+        },
       );
       if (photo == null || !mounted) return;
       _sessionPhotos.add(photo.photoPath);
@@ -218,7 +224,12 @@ class _FuelFormState extends ConsumerState<_FuelForm> {
       setState(() => _receipt = photo);
       _touch();
     } finally {
-      if (mounted) setState(() => _capturing = false);
+      if (mounted) {
+        setState(() {
+          _capturing = false;
+          _savingReceipt = false;
+        });
+      }
     }
   }
 
@@ -477,7 +488,7 @@ class _FuelFormState extends ConsumerState<_FuelForm> {
                 children: [
                   SizedBox.square(
                     dimension: 72,
-                    child: _capturing
+                    child: _savingReceipt
                         ? const Center(child: CircularProgressIndicator())
                         : _receipt != null
                         ? EvidencePhoto(path: _receipt!.photoPath)

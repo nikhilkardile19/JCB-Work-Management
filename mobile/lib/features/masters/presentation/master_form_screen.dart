@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/routes.dart';
+import '../../../core/errors/error_log.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/app_pickers.dart';
@@ -171,7 +174,12 @@ class _MasterFormState extends ConsumerState<_MasterForm> {
       context.pop();
     } on MasterSaveException catch (e) {
       setState(() => _serverErrors = e.fieldErrors);
-    } catch (e) {
+    } catch (e, stack) {
+      unawaited(
+        ref
+            .read(errorLogProvider)
+            .record(e, stack, context: 'Saving ${kind.singular}'),
+      );
       if (mounted) {
         showAppSnackBar(
           context,

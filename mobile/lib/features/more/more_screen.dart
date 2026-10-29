@@ -7,6 +7,7 @@ import '../../core/config/app_config.dart';
 import '../../core/theme/app_tokens.dart';
 import '../../core/widgets/app_card.dart';
 import '../../core/widgets/dialogs.dart';
+import '../../core/widgets/sync_indicator.dart';
 import '../auth/application/auth_providers.dart';
 import '../company/application/company_providers.dart';
 import '../company/application/session.dart';
@@ -147,9 +148,10 @@ class MoreScreen extends ConsumerWidget {
                 key: const Key('more_sync'),
                 leading: const Icon(Icons.sync),
                 title: const Text('Sync & data'),
-                subtitle: const Align(
+                // Not the tappable AppSyncIndicator: one tap target per row.
+                subtitle: Align(
                   alignment: Alignment.centerLeft,
-                  child: AppSyncIndicator(),
+                  child: SyncIndicator(state: ref.watch(appSyncStateProvider)),
                 ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => context.push(Routes.sync),
@@ -227,7 +229,8 @@ class MoreScreen extends ConsumerWidget {
                   onTap: () => showAboutDialog(
                     context: context,
                     applicationName: AppConfig.appName,
-                    applicationVersion: '0.1.0 (${AppConfig.env.name})',
+                    applicationVersion:
+                        '${AppConfig.version} (${AppConfig.env.name})',
                     applicationLegalese: 'Meter photos, receipts and invoice PDFs are stored only on this device.',
                   ),
                 ),

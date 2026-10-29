@@ -132,16 +132,12 @@ class _LicenseScreenState extends ConsumerState<LicenseScreen> {
                       ListTile(
                         leading: const Icon(Icons.phone_android),
                         title: const Text('This phone'),
-                        subtitle: FutureBuilder<String>(
-                          future: ref
-                              .read(appDatabaseProvider)
-                              .installationId(),
-                          builder: (_, s) => Text(
-                            s.hasData
-                                ? 'Device ID ${s.data!.substring(0, 8).toUpperCase()}'
-                                : '',
-                          ),
-                        ),
+                        subtitle: Text(switch (ref
+                            .watch(installationIdProvider)
+                            .value) {
+                          final id? => 'Device ID ${shortDeviceId(id)}',
+                          null => '',
+                        }),
                       ),
                     ],
                   ),

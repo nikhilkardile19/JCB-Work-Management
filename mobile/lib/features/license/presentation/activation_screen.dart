@@ -147,15 +147,14 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
                     onPressed: () => ref.read(authRepositoryProvider).signOut(),
                   ),
                   const SizedBox(height: AppSpace.xl),
-                  FutureBuilder<String>(
-                    future: ref.read(appDatabaseProvider).installationId(),
-                    builder: (_, snap) => Text(
-                      snap.hasData
-                          ? 'Device ID for support: ${snap.data!.substring(0, 8).toUpperCase()}'
-                          : '',
-                      style: theme.textTheme.bodySmall,
-                      textAlign: TextAlign.center,
-                    ),
+                  Text(
+                    switch (ref.watch(installationIdProvider).value) {
+                      final id? =>
+                        'Device ID for support: ${shortDeviceId(id)}',
+                      null => '',
+                    },
+                    style: theme.textTheme.bodySmall,
+                    textAlign: TextAlign.center,
                   ),
                 ],
               ),
