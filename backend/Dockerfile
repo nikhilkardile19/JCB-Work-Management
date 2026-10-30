@@ -3,6 +3,8 @@
 #   docker run --env-file .env.production -p 3000:3000 jcb-api
 # Run migrations as a release step before starting new instances:
 #   docker run --env-file .env.production jcb-api npx prisma migrate deploy
+# Hosts without a release step can migrate on start instead:
+#   docker run --env-file .env.production jcb-api sh scripts/start-with-migrations.sh
 
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
@@ -17,6 +19,7 @@ WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
+COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/prisma.config.ts /app/package.json ./
 USER node
 EXPOSE 3000
