@@ -1,5 +1,7 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'dart:async';
+
+import '../../../core/network/api_client.dart';
+import '../../../core/network/api_exception.dart';
 
 class CompanyMember {
   const CompanyMember({
@@ -26,9 +28,11 @@ class CompanyUsersException implements Exception {
   String toString() => message;
 }
 
-/// Company user administration (owner/admin). Reads members directly;
-/// every change goes through a Cloud Function that re-checks the caller.
+/// Company user administration (owner/admin). Every change goes through the
+/// server, which re-checks the caller.
 abstract interface class CompanyUsersService {
+  /// The company's members, sorted by email, kept up to date while listened
+  /// to.
   Stream<List<CompanyMember>> watch(String companyId);
 
   Future<void> invite({
@@ -50,47 +54,107 @@ abstract interface class CompanyUsersService {
   });
 }
 
-class CloudCompanyUsersService implements CompanyUsersService {
-  CloudCompanyUsersService({
-    FirebaseFirestore? firestore,
-    FirebaseFunctions? functions,
-  }) : _db = firestore ?? FirebaseFirestore.instance,
-       _functions =
-           functions ?? FirebaseFunctions.instanceFor(region: 'asia-south1');
+/// `/companies/:companyId/members`. The server has no push channel, so
+/// [watch] polls: at once, after every change made through this service,
+/// and every [refreshInterval] while listened to.
+class HttpCompanyUsersService implements CompanyUsersService {
+  HttpCompanyUsersService(
+    this._api, {
+    this.refreshInterval = const Duration(seconds: 30),
+  });
 
-  final FirebaseFirestore _db;
-  final FirebaseFunctions _functions;
+  final ApiClient _api;
+  final Duration refreshInterval;
+
+  /// Company IDs changed through this instance.
+  final _changed = StreamController<String>.broadcast();
+
+  static const _unreachable =
+      'Could not reach the server. Connect to the internet and try again.';
+
+  static CompanyUsersException _failure(Object e) =>
+      CompanyUsersException(switch (e) {
+        ApiUnavailable(isRateLimited: true) => e.message,
+        ApiException(:final message) => message,
+        _ => _unreachable,
+      });
+
+  Future<List<CompanyMember>> _fetch(String companyId) async {
+    try {
+      final json = await _api.get(apiPath(['companies', companyId, 'members']));
+      return [
+        for (final m in (json['items'] as List).cast<Json>())
+          CompanyMember(
+            uid: m['uid'] as String,
+            email: m['email'] as String? ?? '',
+            role: m['role'] as String? ?? 'operator',
+            active: m['status'] == 'active',
+          ),
+      ]..sort((a, b) => a.email.compareTo(b.email));
+    } catch (e) {
+      throw _failure(e);
+    }
+  }
 
   @override
-  Stream<List<CompanyMember>> watch(String companyId) => _db
-      .collection('companies/$companyId/companyUsers')
-      .snapshots()
-      .map(
-        (s) => [
-          for (final d in s.docs)
-            CompanyMember(
-              uid: d.id,
-              email: d.data()['email'] as String? ?? '',
-              role: d.data()['role'] as String? ?? 'operator',
-              active: d.data()['status'] == 'active',
-            ),
-        ]..sort((a, b) => a.email.compareTo(b.email)),
-      );
+  Stream<List<CompanyMember>> watch(String companyId) {
+    late final StreamController<List<CompanyMember>> out;
+    Timer? timer;
+    StreamSubscription<String>? changes;
+    var listening = true, busy = false, again = false, loaded = false;
 
-  Future<void> _call(String name, Map<String, Object?> data) async {
-    try {
-      await _functions.httpsCallable(name).call<Map<String, dynamic>>(data);
-    } on FirebaseFunctionsException catch (e) {
-      throw CompanyUsersException(switch (e.code) {
-        'unavailable' || 'deadline-exceeded' || 'internal' =>
-          'Could not reach the server. Connect to the internet and try again.',
-        _ => e.message ?? 'The change was refused.',
-      });
-    } catch (_) {
-      throw const CompanyUsersException(
-        'Could not reach the server. Connect to the internet and try again.',
-      );
+    Future<void> load() async {
+      if (busy) {
+        // A change landed during this fetch; read again after it.
+        again = true;
+        return;
+      }
+      busy = true;
+      try {
+        do {
+          again = false;
+          try {
+            final members = await _fetch(companyId);
+            if (!listening) return;
+            loaded = true;
+            out.add(members);
+          } catch (e, st) {
+            // Once a list is shown, keep it and try again on the next tick.
+            if (listening && !loaded) out.addError(e, st);
+          }
+        } while (again && listening);
+      } finally {
+        busy = false;
+      }
     }
+
+    out = StreamController<List<CompanyMember>>(
+      onListen: () {
+        changes = _changed.stream
+            .where((id) => id == companyId)
+            .listen((_) => unawaited(load()));
+        timer = Timer.periodic(refreshInterval, (_) => unawaited(load()));
+        unawaited(load());
+      },
+      onCancel: () {
+        listening = false;
+        timer?.cancel();
+        return changes?.cancel();
+      },
+    );
+    return out.stream;
+  }
+
+  Future<void> _change(
+    String companyId,
+    Future<Object?> Function() request,
+  ) async {
+    try {
+      await request();
+    } catch (e) {
+      throw _failure(e);
+    }
+    _changed.add(companyId);
   }
 
   @override
@@ -98,31 +162,37 @@ class CloudCompanyUsersService implements CompanyUsersService {
     required String companyId,
     required String email,
     required String role,
-  }) => _call('inviteCompanyUser', {
-    'companyId': companyId,
-    'email': email,
-    'role': role,
-  });
+  }) => _change(
+    companyId,
+    () => _api.post(
+      apiPath(['companies', companyId, 'members']),
+      body: {'email': email, 'role': role},
+    ),
+  );
 
   @override
   Future<void> setRole({
     required String companyId,
     required String userId,
     required String role,
-  }) => _call('setCompanyUserRole', {
-    'companyId': companyId,
-    'userId': userId,
-    'role': role,
-  });
+  }) => _change(
+    companyId,
+    () => _api.patch(
+      apiPath(['companies', companyId, 'members', userId]),
+      body: {'role': role},
+    ),
+  );
 
   @override
   Future<void> setActive({
     required String companyId,
     required String userId,
     required bool active,
-  }) => _call('setCompanyUserStatus', {
-    'companyId': companyId,
-    'userId': userId,
-    'status': active ? 'active' : 'disabled',
-  });
+  }) => _change(
+    companyId,
+    () => _api.patch(
+      apiPath(['companies', companyId, 'members', userId]),
+      body: {'status': active ? 'active' : 'disabled'},
+    ),
+  );
 }

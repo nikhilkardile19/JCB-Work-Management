@@ -1,0 +1,28 @@
+{
+  "name": "jcb-firestore-export",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Read-only export of the JCB Firestore database and Firebase Auth users to NDJSON backups (migration Phase F).",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "export": "node src/export.ts",
+    "typecheck": "tsc --noEmit",
+    "check:readonly": "node scripts/checkReadOnly.ts",
+    "check": "npm run typecheck && npm run check:readonly",
+    "test:emulator": "sh test/run-e2e.sh"
+  },
+  "dependencies": {
+    "firebase-admin": "14.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  },
+  "allowScripts": {
+    "@firebase/util@1.15.3": false,
+    "protobufjs@7.6.6": false
+  }
+}

@@ -84,8 +84,8 @@ export interface AuditEvent {
   details: Record<string, unknown>
 }
 
-/** Opaque cursor for "load more". */
-export type Cursor = unknown
+/** Opaque cursor for "load more": the server's `next`, sent back as `?cursor=`. */
+export type Cursor = string
 
 export interface Page<T> {
   items: T[]
@@ -110,9 +110,9 @@ export const PAGE_SIZE = 25
 export const EXPIRING_DAYS = 30
 
 /**
- * Everything the portal reads and changes. Reads go to Firestore (allowed by
- * rules for developer admins); every change goes through a Cloud Function
- * that re-checks the admin's role and writes the audit trail.
+ * Everything the portal reads and changes, served by the REST API under
+ * `/admin`. The server re-checks the admin's role on every call and writes
+ * the audit trail for every change.
  */
 export interface AdminApi {
   me(): Promise<AdminProfile>

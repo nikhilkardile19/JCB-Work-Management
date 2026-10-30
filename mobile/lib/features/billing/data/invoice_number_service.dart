@@ -1,4 +1,5 @@
-import 'package:cloud_functions/cloud_functions.dart';
+import '../../../core/network/api_client.dart';
+import '../../../core/network/api_exception.dart';
 
 /// The server couldn't issue a number (offline, not allowed, not deployed).
 class InvoiceNumberUnavailable implements Exception {
@@ -24,14 +25,14 @@ abstract interface class InvoiceNumberService {
   });
 }
 
-/// Calls the `allocateInvoiceNumber` Cloud Function
-/// (firebase/functions/src/invoiceNumbers.ts).
-class CloudInvoiceNumberService implements InvoiceNumberService {
-  CloudInvoiceNumberService([FirebaseFunctions? functions])
-    : _functions =
-          functions ?? FirebaseFunctions.instanceFor(region: 'asia-south1');
+/// `POST /companies/:companyId/invoice-numbers`, sent as this phone.
+class HttpInvoiceNumberService implements InvoiceNumberService {
+  HttpInvoiceNumberService(this._api);
 
-  final FirebaseFunctions _functions;
+  final ApiClient _api;
+
+  static const _unreachable =
+      'Could not reach the server. Connect to the internet and try again.';
 
   @override
   Future<String> allocate({
@@ -41,34 +42,25 @@ class CloudInvoiceNumberService implements InvoiceNumberService {
     required String deviceId,
   }) async {
     try {
-      final result = await _functions
-          .httpsCallable(
-            'allocateInvoiceNumber',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 20)),
-          )
-          .call<Map<String, dynamic>>({
-            'companyId': companyId,
-            'invoiceId': invoiceId,
-            'financialYear': financialYear,
-            'deviceId': deviceId,
-          });
-      return result.data['invoiceNumber'] as String;
-    } on FirebaseFunctionsException catch (e) {
-      throw InvoiceNumberUnavailable(switch (e.code) {
-        'unavailable' || 'deadline-exceeded' || 'internal' =>
-          'Could not reach the server. Connect to the internet and try again.',
-        'permission-denied' =>
-          "You don't have permission to finalize invoices for this company.",
-        'failed-precondition' => e.message ?? 'This company is not active yet.',
-        'resource-exhausted' =>
-          e.message ?? 'Too many requests. Wait a little and try again.',
-        'not-found' => 'Invoice numbering is not set up on the server yet.',
-        _ => e.message ?? 'Could not get an invoice number. Try again.',
-      });
-    } catch (_) {
-      throw const InvoiceNumberUnavailable(
-        'Could not reach the server. Connect to the internet and try again.',
+      final json = await _api.post(
+        apiPath(['companies', companyId, 'invoice-numbers']),
+        body: {'invoiceId': invoiceId, 'financialYear': financialYear},
+        headers: {'X-Device-Id': deviceId},
       );
+      return json['invoiceNumber'] as String;
+    } catch (e) {
+      throw InvoiceNumberUnavailable(messageFor(e));
     }
   }
+
+  /// User-facing message for a failed allocation.
+  static String messageFor(Object error) => switch (error) {
+    ApiUnavailable(isRateLimited: true) => error.message,
+    ApiException(code: 'permission_denied') =>
+      "You don't have permission to finalize invoices for this company.",
+    ApiException(code: 'not_found') =>
+      'Invoice numbering is not set up on the server yet.',
+    ApiException(:final message) => message,
+    _ => _unreachable,
+  };
 }

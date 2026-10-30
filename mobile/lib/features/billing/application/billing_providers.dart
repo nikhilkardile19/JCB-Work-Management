@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import '../../../core/network/network_providers.dart';
 import '../../../data/local/database_provider.dart';
 import '../../company/application/company_providers.dart';
 import '../../work/application/work_providers.dart';
@@ -17,7 +18,7 @@ final invoiceRepositoryProvider = Provider<InvoiceRepository>(
 );
 
 final invoiceNumberServiceProvider = Provider<InvoiceNumberService>(
-  (ref) => CloudInvoiceNumberService(),
+  (ref) => HttpInvoiceNumberService(ref.watch(apiClientProvider)),
 );
 
 final invoiceListProvider = StreamProvider.autoDispose<List<InvoiceView>>((

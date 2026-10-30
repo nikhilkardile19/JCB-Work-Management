@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/connectivity/connectivity_provider.dart';
+import '../../../core/network/network_providers.dart';
 import '../../../data/local/database_provider.dart';
 import '../../work/application/work_providers.dart';
 import '../data/license_service.dart';
@@ -11,11 +12,11 @@ import '../data/replacement_service.dart';
 import '../domain/license.dart';
 
 final licenseServiceProvider = Provider<LicenseService>(
-  (ref) => CloudLicenseService(),
+  (ref) => HttpLicenseService(ref.watch(apiClientProvider)),
 );
 
 final replacementServiceProvider = Provider<ReplacementService>(
-  (ref) => CloudReplacementService(),
+  (ref) => HttpReplacementService(ref.watch(apiClientProvider)),
 );
 
 /// Background license checks (startup, reconnect, hourly). Off in tests.

@@ -4,4 +4,8 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Merged into the main manifest's <application> for debug builds only.
+         The config allows cleartext to the local dev server and nothing else;
+         on API 24+ it takes precedence over usesCleartextTraffic. -->
+    <application android:networkSecurityConfig="@xml/network_security_config" />
 </manifest>

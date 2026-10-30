@@ -43,14 +43,12 @@ dependencies:
   intl: ^0.20.3
   uuid: ^4.6.0
   connectivity_plus: ^7.3.2
-  firebase_core: ^5.1.0
-  firebase_auth: ^7.0.1
-  cloud_firestore: ^7.1.0
   image_picker: ^1.2.4
   geolocator: ^14.0.1
   pdf: ^3.13.1
   printing: ^5.15.1
-  cloud_functions: ^7.0.1
+  dio: ^5.11.1
+  flutter_secure_storage: ^11.2.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

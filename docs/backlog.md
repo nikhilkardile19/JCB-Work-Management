@@ -4,24 +4,26 @@ Status: ✅ Done · 🔄 In progress · ⏳ Not started · ⛔ Blocked (needs ow
 
 ## Blockers requiring the product owner
 
+Firebase Auth, Firestore and Cloud Functions were replaced by the Node.js +
+PostgreSQL backend (ADR 0004). The former Firebase-console steps no longer
+apply. What remains:
+
 | Item | Why blocked | Unblocks |
 |------|-------------|----------|
-| Enable Email/Password sign-in in Firebase Authentication | Console access | Real sign-in on devices |
-| Create the Firestore database (`asia-south1` recommended) | Console access | Company registration |
-| Deploy rules + indexes: `cd firebase && npx firebase login && npm run deploy:rules` | Needs owner's Google login | Company registration, membership lookup |
-| Add `developerAdmins/{uid}` docs for each admin | Console access | Admin portal sign-in |
-| Register a Web app; fill `admin/.env.local` | Console access | Admin portal sign-in |
-| Deploy the admin portal: `cd firebase && npm run deploy:hosting` | Needs owner's Google login + `admin/.env.local` | Admin portal at https://jcb-work-management.web.app |
-| Add GitHub secrets `FIREBASE_SERVICE_ACCOUNT` and `ADMIN_ENV_LOCAL` (see `firebase/README.md`) | Google Cloud + GitHub repo admin | Automatic portal deploy on push to `main` |
-| Upgrade to Blaze plan and deploy Cloud Functions (`cd firebase && npm run deploy:functions`) | Billing account | Invoice finalization (official numbers) |
-| Create staging and production Firebase projects | Billing/ownership | Sprint 12–13 |
-| Confirm `docs/product-decisions.md` items 1–18 | Product decisions | All sprints (defaults used meanwhile) |
+| Choose hosting for the API (Node 24) and a managed PostgreSQL 15+ | Billing/ownership | Staging and production (`docs/migration/deployment.md`) |
+| Choose an SMTP provider; set `SMTP_*` and `MAIL_FROM` | Account/billing | Password-reset emails (until then links are only logged) |
+| Confirm whether production Firestore/Auth hold real data (decision M1) | Only the owner can see the console | Run or skip the Firestore export/import at cutover |
+| Accept that users set a new password after cutover (decision M2) | Product decision | Cutover communication |
+| API domain + portal domain; add the API origin to the CSP in `firebase/firebase.json` | DNS ownership | Portal deploy (predeploy check) |
+| Update GitHub secret `ADMIN_ENV_LOCAL` to `VITE_API_BASE_URL=https://<api>/api/v1` | GitHub repo admin | Automatic portal deploy |
+| Create developer admins: `npm run admin:create -- --email … --role super` | Needs production DB access | Admin portal sign-in |
+| Confirm `docs/product-decisions.md` items 1–18 and migration decisions M1–M8 | Product decisions | All sprints (defaults used meanwhile) |
 
 ## User stories (epics → acceptance criteria summarized)
 
 | ID | Story | Acceptance | Sprint |
 |----|-------|-----------|--------|
-| US-01 | As a user I can sign in with email/password | Invalid creds show error; protected routes redirect to login | 2 |
+| US-01 | As a user I can sign in with email/password | Invalid creds show error; protected routes redirect to login | 2, M |
 | US-02 | As an owner I can create my company profile | Required fields validated; profile cached locally | 2 |
 | US-03 | As an admin I manage clients, sites, machines, operators, pumps offline | CRUD works in airplane mode; referenced records cannot be hard-deleted | 3 |
 | US-04 | As an operator I log work from meter readings | hours = end − start; end < start rejected; photos stored app-private | 4 |
@@ -53,3 +55,4 @@ Status: ✅ Done · 🔄 In progress · ⏳ Not started · ⛔ Blocked (needs ow
 | 11 | Reports, polish and security hardening | ⏳ |
 | 12 | QA, UAT and data recovery tests | ⏳ |
 | 13 | Deployment and launch | ⏳ |
+| M | Firebase → Node.js + PostgreSQL migration (`docs/migration/`) | 🔄 In progress |

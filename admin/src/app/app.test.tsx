@@ -8,7 +8,7 @@ import { ToastProvider } from '../lib/toast'
 import { FakeAdminApi } from '../test/fakeAdminApi'
 import { FakeAuthService } from '../test/fakeAuth'
 import type { AuthService } from '../lib/authContext'
-import { messageForAuthError, NOT_ADMIN_MESSAGE } from '../lib/firebaseAuthService'
+import { messageForAuthError, NOT_ADMIN_MESSAGE } from '../lib/httpAuthService'
 import { validators } from '../lib/validators'
 import { AppRoutes } from './routes'
 
@@ -52,9 +52,9 @@ describe('validators and error messages', () => {
     expect(validators.password('longenough')).toBeNull()
   })
 
-  it('maps Firebase auth codes to friendly messages', () => {
-    expect(messageForAuthError('auth/invalid-credential')).toBe('Incorrect email or password.')
-    expect(messageForAuthError('auth/unknown')).toMatch(/try again/)
+  it('maps API auth error reasons to friendly messages', () => {
+    expect(messageForAuthError('invalid_credentials')).toBe('Incorrect email or password.')
+    expect(messageForAuthError('unknown')).toMatch(/try again/)
   })
 })
 
@@ -130,7 +130,7 @@ describe('route protection', () => {
     expect(service.resetEmail).toBe('admin@jcbworks.in')
   })
 
-  it('explains when Firebase is not configured and disables sign-in', async () => {
+  it('explains when the API is not configured and disables sign-in', async () => {
     renderAt('/login', null)
     expect(await loginHeading()).toBeInTheDocument()
     expect(screen.getByText(/not configured/)).toBeInTheDocument()

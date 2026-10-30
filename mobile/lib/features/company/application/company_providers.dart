@@ -1,6 +1,6 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/network/network_providers.dart';
 import '../../../data/local/database_provider.dart';
 import '../../auth/application/auth_providers.dart';
 import '../data/company_remote_source.dart';
@@ -9,7 +9,7 @@ import '../domain/company.dart';
 import 'session.dart';
 
 final companyRemoteSourceProvider = Provider<CompanyRemoteSource>(
-  (ref) => FirestoreCompanyRemoteSource(FirebaseFirestore.instance),
+  (ref) => HttpCompanyRemoteSource(ref.watch(apiClientProvider)),
 );
 
 final companyRepositoryProvider = Provider<CompanyRepository>(

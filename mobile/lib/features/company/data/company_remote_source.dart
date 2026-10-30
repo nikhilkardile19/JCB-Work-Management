@@ -1,9 +1,8 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
+import '../../../core/network/api_client.dart';
 import '../domain/company.dart';
 import '../domain/permissions.dart';
 
-/// Server-side company data. Firestore implementation below; tests use a fake.
+/// Server-side company data. REST implementation below; tests use a fake.
 abstract interface class CompanyRemoteSource {
   /// Active memberships of [uid], with their companies. Must fail (not return
   /// an empty list) when the server can't be reached.
@@ -24,32 +23,28 @@ abstract interface class CompanyRemoteSource {
   });
 }
 
-class FirestoreCompanyRemoteSource implements CompanyRemoteSource {
-  FirestoreCompanyRemoteSource(this._db);
+/// `GET /me/memberships`, `POST /companies`, `PATCH /companies/:id`.
+class HttpCompanyRemoteSource implements CompanyRemoteSource {
+  HttpCompanyRemoteSource(this._api);
 
-  final FirebaseFirestore _db;
-
-  static const _server = GetOptions(source: Source.server);
-
-  DocumentReference<Map<String, dynamic>> _company(String id) =>
-      _db.collection('companies').doc(id);
+  final ApiClient _api;
 
   @override
   Future<List<CompanyMembership>> fetchMemberships(String uid) async {
-    final members = await _db
-        .collectionGroup('companyUsers')
-        .where('uid', isEqualTo: uid)
-        .get(_server);
+    final json = await _api.get('/me/memberships');
+    // Never cache one user's companies under another's ID.
+    if (_api.currentUserId != uid) {
+      throw StateError('The signed-in user changed.');
+    }
     final result = <CompanyMembership>[];
-    for (final m in members.docs) {
-      final role = CompanyRole.parse(m.data()['role'] as String?);
-      if (role == null || m.data()['status'] != 'active') continue;
-      final companyId = m.reference.parent.parent!.id;
-      final snap = await _company(companyId).get(_server);
-      final data = snap.data();
-      if (data == null) continue;
+    for (final item in (json['items'] as List).cast<Json>()) {
+      final role = CompanyRole.parse(item['role'] as String?);
+      if (role == null || item['status'] != 'active') continue;
       result.add(
-        CompanyMembership(company: _toCompany(snap.id, data), role: role),
+        CompanyMembership(
+          company: _toCompany(item['company'] as Json),
+          role: role,
+        ),
       );
     }
     return result;
@@ -62,34 +57,12 @@ class FirestoreCompanyRemoteSource implements CompanyRemoteSource {
     required String email,
     required CompanyProfile profile,
   }) async {
-    final batch = _db.batch()
-      ..set(_company(companyId), {
-        ...profile.toMap(),
-        'id': companyId,
-        'currency': profile.currency,
-        'status': CompanyStatus.pending.name,
-        'ownerUid': uid,
-        'createdBy': uid,
-        'updatedBy': uid,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-        'schemaVersion': 1,
-      })
-      ..set(_company(companyId).collection('companyUsers').doc(uid), {
-        'uid': uid,
-        'companyId': companyId,
-        'email': email,
-        'role': CompanyRole.owner.name,
-        'status': 'active',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-    await batch.commit();
-    return Company(
-      id: companyId,
-      profile: profile,
-      status: CompanyStatus.pending,
-      ownerUid: uid,
+    // Idempotent per ID: a retry after a lost reply returns the same company.
+    final json = await _api.post(
+      '/companies',
+      body: {..._body(profile), 'id': companyId},
     );
+    return _toCompany(json);
   }
 
   @override
@@ -97,14 +70,21 @@ class FirestoreCompanyRemoteSource implements CompanyRemoteSource {
     required String companyId,
     required String uid,
     required CompanyProfile profile,
-  }) => _company(companyId).update({
-    ...profile.toMap(),
-    'updatedBy': uid,
-    'updatedAt': FieldValue.serverTimestamp(),
-  });
+  }) => _api.patch(apiPath(['companies', companyId]), body: _body(profile));
 
-  static Company _toCompany(String id, Map<String, dynamic> d) => Company(
-    id: id,
+  /// The contract's `CompanyProfile`; the server sets the rest.
+  static Json _body(CompanyProfile p) => {
+    'name': p.name,
+    'contactPerson': p.contactPerson,
+    'phone': p.phone,
+    'address': p.address,
+    'invoicePrefix': p.invoicePrefix,
+    'email': p.email,
+    'gstin': p.gstin,
+  };
+
+  static Company _toCompany(Json d) => Company(
+    id: d['id'] as String,
     profile: CompanyProfile.fromMap(d),
     status: CompanyStatus.parse(d['status'] as String?),
     ownerUid: d['ownerUid'] as String? ?? '',

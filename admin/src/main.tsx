@@ -2,18 +2,19 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router'
 import { AppRoutes } from './app/routes'
-import { AdminApiContext, type AdminApi } from './lib/adminApi'
+import { AdminApiContext } from './lib/adminApi'
+import { createApiClient } from './lib/apiClient'
 import { AuthProvider } from './lib/auth'
-import type { AuthService } from './lib/authContext'
+import { createHttpAdminApi } from './lib/httpAdminApi'
+import { createHttpAuthService } from './lib/httpAuthService'
 import { ToastProvider } from './lib/toast'
 import './index.css'
 
-const configured = Boolean(import.meta.env.VITE_FIREBASE_API_KEY && import.meta.env.VITE_FIREBASE_PROJECT_ID)
+const configured = Boolean(import.meta.env.VITE_API_BASE_URL)
 
-// Firebase SDK is loaded as a separate chunk so the shell paints sooner.
-const services: { auth: AuthService; api: AdminApi } | null = configured
-  ? (await import('./lib/firebaseAuthService')).createFirebaseServices()
-  : null
+// One client (one session) shared by sign-in and the admin API.
+const client = configured ? createApiClient({ baseUrl: import.meta.env.VITE_API_BASE_URL! }) : null
+const services = client ? { auth: createHttpAuthService(client), api: createHttpAdminApi(client) } : null
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

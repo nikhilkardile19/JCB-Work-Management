@@ -1,0 +1,806 @@
+// JCB Work Management — PostgreSQL schema.
+//
+// Mapping from the former Firestore layout: docs/migration/README.md.
+// Conventions:
+//   * IDs are text. Firestore document IDs and Firebase UIDs are kept as-is;
+//     new server IDs are UUID v4.
+//   * Company-owned business tables use the key (company_id, id) and
+//     composite foreign keys, so a record can only reference records of its
+//     own company.
+//   * Money is integer paise (BIGINT); meter readings and hours are integer
+//     hundredths of an hour; litres are integer hundredths of a litre.
+//   * Records synced from phones are never hard-deleted (deleted_at).
+
+generator client {
+  provider               = "prisma-client"
+  output                 = "../src/generated/prisma"
+  moduleFormat           = "esm"
+  importFileExtension    = "js"
+  generatedFileExtension = "ts"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// --- Enums ----------------------------------------------------------------
+
+enum UserStatus {
+  active
+  disabled
+}
+
+enum AdminRole {
+  super
+  support
+}
+
+enum SessionClient {
+  mobile
+  portal
+}
+
+enum CompanyStatus {
+  pending
+  active
+  suspended
+}
+
+enum CompanyRole {
+  owner
+  admin
+  manager
+  operator
+  accounts
+}
+
+enum MemberStatus {
+  active
+  disabled
+}
+
+enum LicenseStatus {
+  pending
+  active
+  suspended
+  expired
+  revoked
+}
+
+enum DeviceStatus {
+  active
+  revoked
+}
+
+enum ReplacementStatus {
+  pending
+  approved
+  rejected
+}
+
+enum WorkLogStatus {
+  draft
+  submitted
+  approved
+  rejected
+  invoiced
+  cancelled
+}
+
+enum InvoiceStatus {
+  draft
+  finalized
+  cancelled
+}
+
+// --- Identity -------------------------------------------------------------
+
+model User {
+  id                String     @id
+  /// Stored lower-cased.
+  email             String     @unique
+  /// Argon2id. Null until the user sets a password (invited or migrated users).
+  passwordHash      String?    @map("password_hash")
+  status            UserStatus @default(active)
+  /// Bumped on password reset/disable; access tokens carry it and die with it.
+  tokenVersion      Int        @default(0) @map("token_version")
+  passwordChangedAt DateTime?  @map("password_changed_at") @db.Timestamptz(3)
+  lastLoginAt       DateTime?  @map("last_login_at") @db.Timestamptz(3)
+  createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  developerAdmin  DeveloperAdmin?
+  refreshTokens   RefreshToken[]
+  resetTokens     PasswordResetToken[]
+  memberships     CompanyMember[]
+  ownedCompanies  Company[]       @relation("CompanyOwner")
+
+  @@map("users")
+}
+
+/// Developer administrators of the platform (replaces `developerAdmins/{uid}`).
+model DeveloperAdmin {
+  userId      String    @id @map("user_id")
+  role        AdminRole @default(support)
+  /// Extra grants for support admins: companies.manage, licenses.manage, devices.revoke.
+  permissions String[]  @default([])
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("developer_admins")
+}
+
+/// One row per issued refresh token. Tokens of one sign-in share a family;
+/// presenting a rotated token again revokes the family (theft detection).
+model RefreshToken {
+  id           String        @id
+  userId       String        @map("user_id")
+  familyId     String        @map("family_id")
+  /// SHA-256 of the opaque token; the token itself is never stored.
+  tokenHash    String        @unique @map("token_hash")
+  client       SessionClient
+  expiresAt    DateTime      @map("expires_at") @db.Timestamptz(3)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Set when the token was exchanged for its successor.
+  rotatedAt    DateTime?     @map("rotated_at") @db.Timestamptz(3)
+  replacedById String?       @map("replaced_by_id")
+  revokedAt    DateTime?     @map("revoked_at") @db.Timestamptz(3)
+  revokeReason String?       @map("revoke_reason")
+  userAgent    String?       @map("user_agent")
+  ip           String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id        String    @id
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// --- Tenancy --------------------------------------------------------------
+
+model Company {
+  id            String        @id
+  name          String
+  contactPerson String        @map("contact_person")
+  phone         String
+  email         String?
+  address       String
+  gstin         String?
+  invoicePrefix String        @map("invoice_prefix")
+  currency      String        @default("INR")
+  status        CompanyStatus @default(pending)
+  ownerUserId   String        @map("owner_user_id")
+  createdBy     String?       @map("created_by")
+  updatedBy     String?       @map("updated_by")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  owner          User                       @relation("CompanyOwner", fields: [ownerUserId], references: [id])
+  members        CompanyMember[]
+  licenses       License[]
+  devices        Device[]
+  replacements   DeviceReplacementRequest[]
+  syncState      CompanySyncState?
+  counters       InvoiceNumberCounter[]
+  issuedNumbers  IssuedInvoiceNumber[]
+  clients        Client[]
+  sites          Site[]
+  machines       Machine[]
+  operators      Operator[]
+  petrolPumps    PetrolPump[]
+  workLogs       WorkLog[]
+  fuelEntries    FuelEntry[]
+  invoices       Invoice[]
+  invoiceLines   InvoiceLine[]
+  payments       Payment[]
+  auditLogs      AuditLog[]
+
+  @@index([status, createdAt])
+  @@map("companies")
+}
+
+/// Replaces `companies/{companyId}/companyUsers/{uid}`.
+model CompanyMember {
+  companyId String       @map("company_id")
+  userId    String       @map("user_id")
+  role      CompanyRole
+  status    MemberStatus @default(active)
+  invitedBy String?      @map("invited_by")
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  company Company @relation(fields: [companyId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@id([companyId, userId])
+  @@index([userId])
+  @@map("company_members")
+}
+
+// --- Licensing ------------------------------------------------------------
+
+model License {
+  id                 String        @id
+  companyId          String        @map("company_id")
+  status             LicenseStatus
+  validFrom          DateTime      @map("valid_from") @db.Timestamptz(3)
+  validUntil         DateTime      @map("valid_until") @db.Timestamptz(3)
+  maxDevices         Int           @map("max_devices")
+  /// SHA-256 of the normalized activation code; the code is shown once.
+  activationCodeHash String        @map("activation_code_hash")
+  lastValidatedAt    DateTime?     @map("last_validated_at") @db.Timestamptz(3)
+  createdBy          String?       @map("created_by")
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  company      Company                    @relation(fields: [companyId], references: [id])
+  devices      Device[]
+  replacements DeviceReplacementRequest[]
+
+  @@unique([companyId, id])
+  @@unique([companyId, activationCodeHash])
+  @@index([status, validUntil])
+  @@index([validUntil])
+  @@map("licenses")
+}
+
+/// Replaces `companies/{companyId}/authorizedDevices/{deviceId}`. The ID is
+/// the app's per-installation ID; one phone may serve several companies.
+model Device {
+  companyId              String       @map("company_id")
+  id                     String
+  licenseId              String       @map("license_id")
+  userId                 String       @map("user_id")
+  deviceModel            String?      @map("device_model")
+  platform               String       @default("android")
+  status                 DeviceStatus
+  activatedAt            DateTime?    @map("activated_at") @db.Timestamptz(3)
+  lastSeenAt             DateTime?    @map("last_seen_at") @db.Timestamptz(3)
+  revokedAt              DateTime?    @map("revoked_at") @db.Timestamptz(3)
+  revokedBy              String?      @map("revoked_by")
+  revokeReason           String?      @map("revoke_reason")
+  replacedBy             String?      @map("replaced_by")
+  replacementForDeviceId String?      @map("replacement_for_device_id")
+
+  company Company @relation(fields: [companyId], references: [id])
+  license License @relation(fields: [companyId, licenseId], references: [companyId, id])
+
+  @@id([companyId, id])
+  @@index([licenseId, status])
+  @@index([status, lastSeenAt(sort: Desc)])
+  @@index([lastSeenAt(sort: Desc)])
+  @@map("devices")
+}
+
+model DeviceReplacementRequest {
+  id              String            @id
+  companyId       String            @map("company_id")
+  licenseId       String            @map("license_id")
+  newDeviceId     String            @map("new_device_id")
+  newDeviceModel  String?           @map("new_device_model")
+  requestedBy     String            @map("requested_by")
+  reason          String
+  status          ReplacementStatus @default(pending)
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  reviewedBy      String?           @map("reviewed_by")
+  reviewedAt      DateTime?         @map("reviewed_at") @db.Timestamptz(3)
+  reviewReason    String?           @map("review_reason")
+  revokedDeviceId String?           @map("revoked_device_id")
+
+  company Company @relation(fields: [companyId], references: [id])
+  license License @relation(fields: [companyId, licenseId], references: [companyId, id])
+
+  // Plus a partial unique index (one pending request per phone), see the
+  // first migration.
+  @@index([status, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@index([companyId, newDeviceId])
+  @@map("device_replacement_requests")
+}
+
+/// Server-written history of license, device, company and user actions
+/// (replaces `auditEvents`). Never updated or deleted.
+model AuditEvent {
+  id        String   @id
+  type      String
+  actorId   String?  @map("actor_id")
+  companyId String?  @map("company_id")
+  licenseId String?  @map("license_id")
+  deviceId  String?  @map("device_id")
+  reason    String?
+  details   Json     @default("{}")
+  at        DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([at(sort: Desc)])
+  @@index([companyId, at(sort: Desc)])
+  @@index([licenseId, at(sort: Desc)])
+  @@index([deviceId, at(sort: Desc)])
+  @@index([type, at(sort: Desc)])
+  @@map("audit_events")
+}
+
+/// Fixed-window abuse counters (replaces `rateLimits/{key}`).
+model RateLimit {
+  key         String   @id
+  windowStart DateTime @map("window_start") @db.Timestamptz(3)
+  count       Int
+  expiresAt   DateTime @map("expires_at") @db.Timestamptz(3)
+
+  @@index([expiresAt])
+  @@map("rate_limits")
+}
+
+// --- Invoice numbering ----------------------------------------------------
+
+model InvoiceNumberCounter {
+  companyId     String   @map("company_id")
+  /// Indian financial year, e.g. "2026-27".
+  financialYear String   @map("financial_year")
+  last          Int
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@id([companyId, financialYear])
+  @@map("invoice_number_counters")
+}
+
+/// The official number issued for an invoice (idempotent per invoice).
+model IssuedInvoiceNumber {
+  companyId     String   @map("company_id")
+  invoiceId     String   @map("invoice_id")
+  invoiceNumber String   @map("invoice_number")
+  financialYear String   @map("financial_year")
+  issuedBy      String   @map("issued_by")
+  issuedAt      DateTime @default(now()) @map("issued_at") @db.Timestamptz(3)
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@id([companyId, invoiceId])
+  @@unique([companyId, invoiceNumber])
+  @@map("issued_invoice_numbers")
+}
+
+// --- Sync -----------------------------------------------------------------
+
+/// Per-company change sequence. Every accepted sync write increments it
+/// under a row lock, so sequence order is commit order and a pull cursor can
+/// never skip a change that commits later.
+model CompanySyncState {
+  companyId String @id @map("company_id")
+  seq       BigInt @default(0)
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("company_sync_state")
+}
+
+// Every synced table carries: rev (server revision, +1 per accepted write),
+// sync_seq (position in the company's change feed), server_updated_at,
+// pushed_by (user) and device_id (phone). Business timestamps are the
+// phone's, converted from epoch milliseconds.
+
+model Client {
+  companyId       String    @map("company_id")
+  id              String
+  name            String
+  notes           String?
+  isActive        Boolean   @default(true) @map("is_active")
+  contactPerson   String?   @map("contact_person")
+  phone           String?
+  email           String?
+  billingAddress  String?   @map("billing_address")
+  gstin           String?
+  createdAt       DateTime  @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @map("updated_at") @db.Timestamptz(3)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy       String    @map("created_by")
+  updatedBy       String    @map("updated_by")
+  version         Int       @default(1)
+  rev             Int
+  syncSeq         BigInt    @map("sync_seq")
+  serverUpdatedAt DateTime  @map("server_updated_at") @db.Timestamptz(3)
+  pushedBy        String    @map("pushed_by")
+  deviceId        String?   @map("device_id")
+
+  company     Company     @relation(fields: [companyId], references: [id])
+  sites       Site[]
+  workLogs    WorkLog[]
+  fuelEntries FuelEntry[]
+  invoices    Invoice[]
+
+  @@id([companyId, id])
+  @@unique([companyId, syncSeq])
+  @@index([companyId, name])
+  @@map("clients")
+}
+
+model Site {
+  companyId              String    @map("company_id")
+  id                     String
+  clientId               String    @map("client_id")
+  name                   String
+  notes                  String?
+  isActive               Boolean   @default(true) @map("is_active")
+  address                String?
+  contactPerson          String?   @map("contact_person")
+  phone                  String?
+  /// Suggested rate (paise per hour); invoices may override it.
+  defaultHourlyRatePaise BigInt?   @map("default_hourly_rate_paise")
+  createdAt              DateTime  @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime  @map("updated_at") @db.Timestamptz(3)
+  deletedAt              DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy              String    @map("created_by")
+  updatedBy              String    @map("updated_by")
+  version                Int       @default(1)
+  rev                    Int
+  syncSeq                BigInt    @map("sync_seq")
+  serverUpdatedAt        DateTime  @map("server_updated_at") @db.Timestamptz(3)
+  pushedBy               String    @map("pushed_by")
+  deviceId               String?   @map("device_id")
+
+  company     Company     @relation(fields: [companyId], references: [id])
+  client      Client      @relation(fields: [companyId, clientId], references: [companyId, id], onDelete: Restrict)
+  workLogs    WorkLog[]
+  fuelEntries FuelEntry[]
+
+  @@id([companyId, id])
+  @@unique([companyId, syncSeq])
+  @@index([companyId, clientId])
+  @@map("sites")
+}
+
+model Machine {
+  companyId           String    @map("company_id")
+  id                  String
+  name                String
+  notes               String?
+  isActive            Boolean   @default(true) @map("is_active")
+  registrationNumber  String?   @map("registration_number")
+  serialNumber        String?   @map("serial_number")
+  model               String?
+  /// Hour-meter reading when added, hundredths of an hour.
+  initialMeterReading Int       @map("initial_meter_reading")
+  meterUnit           String    @default("hours") @map("meter_unit")
+  createdAt           DateTime  @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime  @map("updated_at") @db.Timestamptz(3)
+  deletedAt           DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy           String    @map("created_by")
+  updatedBy           String    @map("updated_by")
+  version             Int       @default(1)
+  rev                 Int
+  syncSeq             BigInt    @map("sync_seq")
+  serverUpdatedAt     DateTime  @map("server_updated_at") @db.Timestamptz(3)
+  pushedBy            String    @map("pushed_by")
+  deviceId            String?   @map("device_id")
+
+  company     Company     @relation(fields: [companyId], references: [id])
+  workLogs    WorkLog[]
+  fuelEntries FuelEntry[]
+
+  @@id([companyId, id])
+  @@unique([companyId, syncSeq])
+  @@index([companyId, name])
+  @@map("machines")
+}
+
+model Operator {
+  companyId       String    @map("company_id")
+  id              String
+  name            String
+  notes           String?
+  isActive        Boolean   @default(true) @map("is_active")
+  phone           String?
+  code            String?
+  createdAt       DateTime  @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @map("updated_at") @db.Timestamptz(3)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy       String    @map("created_by")
+  updatedBy       String    @map("updated_by")
+  version         Int       @default(1)
+  rev             Int
+  syncSeq         BigInt    @map("sync_seq")
+  serverUpdatedAt DateTime  @map("server_updated_at") @db.Timestamptz(3)
+  pushedBy        String    @map("pushed_by")
+  deviceId        String?   @map("device_id")
+
+  company  Company   @relation(fields: [companyId], references: [id])
+  workLogs WorkLog[]
+
+  @@id([companyId, id])
+  @@unique([companyId, syncSeq])
+  @@index([companyId, name])
+  @@map("operators")
+}
+
+/// Fuel suppliers ("petrol pumps" in the app).
+model PetrolPump {
+  companyId       String    @map("company_id")
+  id              String
+  name            String
+  notes           String?
+  isActive        Boolean   @default(true) @map("is_active")
+  phone           String?
+  address         String?
+  createdAt       DateTime  @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @map("updated_at") @db.Timestamptz(3)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy       String    @map("created_by")
+  updatedBy       String    @map("updated_by")
+  version         Int       @default(1)
+  rev             Int
+  syncSeq         BigInt    @map("sync_seq")
+  serverUpdatedAt DateTime  @map("server_updated_at") @db.Timestamptz(3)
+  pushedBy        String    @map("pushed_by")
+  deviceId        String?   @map("device_id")
+
+  company     Company     @relation(fields: [companyId], references: [id])
+  fuelEntries FuelEntry[]
+
+  @@id([companyId, id])
+  @@unique([companyId, syncSeq])
+  @@index([companyId, name])
+  @@map("petrol_pumps")
+}
+
+model WorkLog {
+  companyId           String        @map("company_id")
+  id                  String
+  workDate            DateTime      @map("work_date") @db.Date
+  clientId            String        @map("client_id")
+  siteId              String        @map("site_id")
+  machineId           String        @map("machine_id")
+  operatorId          String?       @map("operator_id")
+  /// Operator name as recorded, kept even if the operator master changes.
+  operatorName        String?       @map("operator_name")
+  startReading        Int           @map("start_reading")
+  startCapturedAt     DateTime?     @map("start_captured_at") @db.Timestamptz(3)
+  startLat            Float?        @map("start_lat")
+  startLng            Float?        @map("start_lng")
+  startAccuracy       Float?        @map("start_accuracy")
+  startLocationStatus String?       @map("start_location_status")
+  endReading          Int?          @map("end_reading")
+  endCapturedAt       DateTime?     @map("end_captured_at") @db.Timestamptz(3)
+  endLat              Float?        @map("end_lat")
+  endLng              Float?        @map("end_lng")
+  endAccuracy         Float?        @map("end_accuracy")
+  endLocationStatus   String?       @map("end_location_status")
+  /// endReading − startReading once both are known.
+  workingHours        Int?          @map("working_hours")
+  /// photo | manual
+  entryMode           String        @map("entry_mode")
+  manualReason        String?       @map("manual_reason")
+  notes               String?
+  anomalyFlags        String?       @map("anomaly_flags")
+  status              WorkLogStatus
+  statusReason        String?       @map("status_reason")
+  approvedBy          String?       @map("approved_by")
+  approvedAt          DateTime?     @map("approved_at") @db.Timestamptz(3)
+  /// Soft reference: the app reserves a log for a draft invoice before the
+  /// invoice itself is uploaded, so this cannot be a foreign key.
+  invoiceId           String?       @map("invoice_id")
+  createdAt           DateTime      @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime      @map("updated_at") @db.Timestamptz(3)
+  deletedAt           DateTime?     @map("deleted_at") @db.Timestamptz(3)
+  createdBy           String        @map("created_by")
+  updatedBy           String        @map("updated_by")
+  version             Int           @default(1)
+  rev                 Int
+  syncSeq             BigInt        @map("sync_seq")
+  serverUpdatedAt     DateTime      @map("server_updated_at") @db.Timestamptz(3)
+  pushedBy            String        @map("pushed_by")
+  deviceId            String?       @map("device_id")
+
+  company      Company       @relation(fields: [companyId], references: [id])
+  client       Client        @relation(fields: [companyId, clientId], references: [companyId, id], onDelete: Restrict)
+  site         Site          @relation(fields: [companyId, siteId], references: [companyId, id], onDelete: Restrict)
+  machine      Machine       @relation(fields: [companyId, machineId], references: [companyId, id], onDelete: Restrict)
+  operator     Operator?     @relation(fields: [companyId, operatorId], references: [companyId, id], onDelete: Restrict)
+  invoiceLines InvoiceLine[]
+
+  @@id([companyId, id])
+  @@unique([companyId, syncSeq])
+  @@index([companyId, workDate])
+  @@index([companyId, machineId])
+  @@index([companyId, status])
+  @@map("work_logs")
+}
+
+model FuelEntry {
+  companyId             String    @map("company_id")
+  id                    String
+  filledAt              DateTime  @map("filled_at") @db.Timestamptz(3)
+  fuelDate              DateTime  @map("fuel_date") @db.Date
+  machineId             String    @map("machine_id")
+  pumpId                String    @map("pump_id")
+  clientId              String?   @map("client_id")
+  siteId                String?   @map("site_id")
+  /// Hundredths of a litre.
+  litresCl              Int       @map("litres_cl")
+  pricePerLitrePaise    BigInt    @map("price_per_litre_paise")
+  /// Always round_half_up(litresCl × pricePerLitrePaise / 100).
+  totalPaise            BigInt    @map("total_paise")
+  receiptCapturedAt     DateTime? @map("receipt_captured_at") @db.Timestamptz(3)
+  receiptLat            Float?    @map("receipt_lat")
+  receiptLng            Float?    @map("receipt_lng")
+  receiptAccuracy       Float?    @map("receipt_accuracy")
+  receiptLocationStatus String?   @map("receipt_location_status")
+  notes                 String?
+  createdAt             DateTime  @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime  @map("updated_at") @db.Timestamptz(3)
+  deletedAt             DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy             String    @map("created_by")
+  updatedBy             String    @map("updated_by")
+  version               Int       @default(1)
+  rev                   Int
+  syncSeq               BigInt    @map("sync_seq")
+  serverUpdatedAt       DateTime  @map("server_updated_at") @db.Timestamptz(3)
+  pushedBy              String    @map("pushed_by")
+  deviceId              String?   @map("device_id")
+
+  company Company    @relation(fields: [companyId], references: [id])
+  machine Machine    @relation(fields: [companyId, machineId], references: [companyId, id], onDelete: Restrict)
+  pump    PetrolPump @relation(fields: [companyId, pumpId], references: [companyId, id], onDelete: Restrict)
+  client  Client?    @relation(fields: [companyId, clientId], references: [companyId, id], onDelete: Restrict)
+  site    Site?      @relation(fields: [companyId, siteId], references: [companyId, id], onDelete: Restrict)
+
+  @@id([companyId, id])
+  @@unique([companyId, syncSeq])
+  @@index([companyId, fuelDate])
+  @@map("fuel_entries")
+}
+
+model Invoice {
+  companyId        String        @map("company_id")
+  id               String
+  clientId         String        @map("client_id")
+  /// Official number, issued by the server when finalized.
+  invoiceNumber    String?       @map("invoice_number")
+  status           InvoiceStatus
+  invoiceDate      DateTime      @map("invoice_date") @db.Date
+  periodFrom       DateTime      @map("period_from") @db.Date
+  periodTo         DateTime      @map("period_to") @db.Date
+  paymentTermsDays Int           @map("payment_terms_days")
+  dueDate          DateTime      @map("due_date") @db.Date
+  notes            String?
+  subtotalPaise    BigInt        @map("subtotal_paise")
+  discountPaise    BigInt        @default(0) @map("discount_paise")
+  totalPaise       BigInt        @map("total_paise")
+  /// JSON text frozen at finalization, exactly as the app wrote it.
+  companySnapshot  String?       @map("company_snapshot")
+  clientSnapshot   String?       @map("client_snapshot")
+  finalizedAt      DateTime?     @map("finalized_at") @db.Timestamptz(3)
+  finalizedBy      String?       @map("finalized_by")
+  cancelledAt      DateTime?     @map("cancelled_at") @db.Timestamptz(3)
+  cancelledBy      String?       @map("cancelled_by")
+  cancelReason     String?       @map("cancel_reason")
+  createdAt        DateTime      @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime      @map("updated_at") @db.Timestamptz(3)
+  deletedAt        DateTime?     @map("deleted_at") @db.Timestamptz(3)
+  createdBy        String        @map("created_by")
+  updatedBy        String        @map("updated_by")
+  version          Int           @default(1)
+  rev              Int
+  syncSeq          BigInt        @map("sync_seq")
+  serverUpdatedAt  DateTime      @map("server_updated_at") @db.Timestamptz(3)
+  pushedBy         String        @map("pushed_by")
+  deviceId         String?       @map("device_id")
+
+  company  Company       @relation(fields: [companyId], references: [id])
+  client   Client        @relation(fields: [companyId, clientId], references: [companyId, id], onDelete: Restrict)
+  lines    InvoiceLine[]
+  payments Payment[]
+
+  @@id([companyId, id])
+  @@unique([companyId, syncSeq])
+  @@unique([companyId, invoiceNumber])
+  @@index([companyId, clientId])
+  @@map("invoices")
+}
+
+/// One billed work log with the values used for billing (a snapshot).
+/// Uploaded inside its invoice, as the `lines` array.
+model InvoiceLine {
+  companyId    String  @map("company_id")
+  id           String
+  invoiceId    String  @map("invoice_id")
+  workLogId    String  @map("work_log_id")
+  workDate     DateTime @map("work_date") @db.Date
+  siteId       String  @map("site_id")
+  siteName     String  @map("site_name")
+  machineId    String  @map("machine_id")
+  machineName  String  @map("machine_name")
+  startReading Int     @map("start_reading")
+  endReading   Int     @map("end_reading")
+  workingHours Int     @map("working_hours")
+  /// Rate for this invoice only; never written back to the site.
+  ratePaise    BigInt  @map("rate_paise")
+  amountPaise  BigInt  @map("amount_paise")
+  description  String?
+  sortOrder    Int     @map("sort_order")
+
+  company Company @relation(fields: [companyId], references: [id])
+  invoice Invoice @relation(fields: [companyId, invoiceId], references: [companyId, id], onDelete: Cascade)
+  workLog WorkLog @relation(fields: [companyId, workLogId], references: [companyId, id], onDelete: Restrict)
+
+  @@id([companyId, id])
+  @@index([companyId, invoiceId])
+  @@index([companyId, workLogId])
+  @@map("invoice_lines")
+}
+
+model Payment {
+  companyId       String    @map("company_id")
+  id              String
+  invoiceId       String    @map("invoice_id")
+  paymentDate     DateTime  @map("payment_date") @db.Date
+  amountPaise     BigInt    @map("amount_paise")
+  /// cash, bank, upi, cheque, other
+  method          String
+  reference       String?
+  notes           String?
+  /// Reversed payments are kept for the audit trail but not counted.
+  reversedAt      DateTime? @map("reversed_at") @db.Timestamptz(3)
+  reversedBy      String?   @map("reversed_by")
+  reverseReason   String?   @map("reverse_reason")
+  createdAt       DateTime  @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @map("updated_at") @db.Timestamptz(3)
+  createdBy       String    @map("created_by")
+  updatedBy       String    @map("updated_by")
+  version         Int       @default(1)
+  rev             Int
+  syncSeq         BigInt    @map("sync_seq")
+  serverUpdatedAt DateTime  @map("server_updated_at") @db.Timestamptz(3)
+  pushedBy        String    @map("pushed_by")
+  deviceId        String?   @map("device_id")
+
+  company Company @relation(fields: [companyId], references: [id])
+  invoice Invoice @relation(fields: [companyId, invoiceId], references: [companyId, id], onDelete: Restrict)
+
+  @@id([companyId, id])
+  @@unique([companyId, syncSeq])
+  @@index([companyId, invoiceId])
+  @@map("payments")
+}
+
+/// Company history written by the app (append-only).
+model AuditLog {
+  companyId       String   @map("company_id")
+  id              String
+  actorId         String   @map("actor_id")
+  action          String
+  entityType      String   @map("entity_type")
+  entityId        String   @map("entity_id")
+  /// JSON text (before/after values, reason), exactly as the app wrote it.
+  details         String?
+  createdAt       DateTime @map("created_at") @db.Timestamptz(3)
+  rev             Int
+  syncSeq         BigInt   @map("sync_seq")
+  serverUpdatedAt DateTime @map("server_updated_at") @db.Timestamptz(3)
+  pushedBy        String   @map("pushed_by")
+  deviceId        String?  @map("device_id")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@id([companyId, id])
+  @@unique([companyId, syncSeq])
+  @@index([companyId, entityType, entityId])
+  @@map("audit_logs")
+}

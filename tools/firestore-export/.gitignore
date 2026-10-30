@@ -1,0 +1,6 @@
+node_modules/
+# Backups contain customer data: keep them out of git.
+exports/
+*.ndjson
+# Emulator logs
+*.log

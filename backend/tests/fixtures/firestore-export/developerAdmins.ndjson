@@ -1,0 +1,2 @@
+{"path":"developerAdmins/Yj3Bq6WmR9tL2xZ5cN8vK1sH4dF7","id":"Yj3Bq6WmR9tL2xZ5cN8vK1sH4dF7","data":{"role":"super","permissions":[],"email":"nikhil@jcbworks.dev"}}
+{"path":"developerAdmins/Gs1Tn4XpK7wM0zR3bV6qL9cH2dJ5","id":"Gs1Tn4XpK7wM0zR3bV6qL9cH2dJ5","data":{"role":"support","permissions":["licenses.manage","devices.revoke"],"email":"support@jcbworks.dev","createdAt":{"__type":"timestamp","ms":1784707800000}}}

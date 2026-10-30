@@ -137,3 +137,53 @@ refusal logs include the App Check app ID for monitoring.
 | The installation ID could be copied from a rooted phone. | Needs root access to the app's private storage. | Play Integrity (App Check) raises the bar. |
 | Members can see their company's member list (emails, roles). | Needed for the team screen. | — |
 | Notes fields have no size limit below Firestore's 1 MiB. | Abuse stays inside the user's own company. | — |
+
+---
+
+# Security review — Firebase → Node.js + PostgreSQL migration
+
+- Date: 2026-10-30
+- Scope: `backend/` (auth, sync, licensing, admin API), the portal's and the
+  app's new HTTP clients and token storage. Supersedes the Firestore rules,
+  Cloud Functions and App Check sections above (kept as history).
+- Result: every control above has a server-side equivalent with a ported
+  test; no known critical or high issues.
+
+## Where each control lives now
+
+| Former control | Now | Tests |
+|---|---|---|
+| Firestore rules: tenant isolation, active membership | `modules/companies/access.ts` on every company route; composite `(company_id, id)` foreign keys in PostgreSQL | `sync.test.ts` › tenant isolation; `companies.test.ts` |
+| Rules: role matrix for work logs, fuel, invoices, payments, masters, history (S11-01…08) | `modules/sync/rules.ts`, line-for-line port | `sync.test.ts` (every former rules case) |
+| Rules: `rev` must advance by one | Revision check inside the write transaction, serialized per company | `sync.test.ts` › concurrency |
+| Rules: active device + license on every write (S11-05) | `deviceLicensed()` before every sync write and invoice number | `sync.test.ts` › device and license; `companies.test.ts` › invoice numbers |
+| Functions: licensing, replacements, users, admin | Same logic in `modules/licenses`, `replacements`, `members`, `admin`; device-limit checks under a row lock | `licensing.test.ts`, `admin.test.ts` |
+| `rateLimits` (S11-06) | `rate_limits` table, atomic upsert shared by all instances | `licensing.test.ts`, `companies.test.ts`, `auth.test.ts` |
+| Generic errors + refusal logging (S11-10) | `middleware/errors.ts` | `auth.test.ts` › platform |
+| Portal security headers (S11-11) | Unchanged (`firebase/firebase.json`); API adds Helmet headers | `auth.test.ts` |
+
+## New controls and findings
+
+| ID | Severity | Area | Finding / control | Status | Test |
+|----|----------|------|-------------------|--------|------|
+| M-01 | High | Auth | Passwords now stored by us. | Argon2id (19 MiB, t=2), rehash on login when parameters change; constant-time path for unknown emails. | `auth.test.ts` › login |
+| M-02 | High | Auth | Session theft. | 15-min JWT (alg/iss/aud pinned, token version); opaque refresh tokens stored as SHA-256, rotated on use, reuse ends the session (60 s grace only while the successor is unused; a fork through the grace window also ends it). | › refresh rotation |
+| M-03 | Medium | Auth | Account enumeration and brute force. | Same answer for unknown email/wrong password; 10 failures per email and 50 per IP per 15 min; reset always 204; 3 reset emails per address and 20 requests per IP per hour. | › login, › password reset |
+| M-04 | Medium | Auth | Password reset. | Single-use, 60 min, newest link only, hashed at rest; a reset revokes every session and invalidates access tokens. | › password reset |
+| M-05 | Medium | Sync | A conflict response returns the server copy. | Read permission is checked first, so roles that can't see billing never receive invoice/payment data. | › a conflict never reveals billing data |
+| M-06 | Medium | Billing | Rules could not sum payments (accepted risk above). | Overpayment and payments on non-finalized invoices refused; subtotal = Σ lines; a work log on at most one finalized invoice. | › invoices and payments |
+| M-07 | Medium | Billing | Concurrent invoice numbering. | Allocation serialized per company; `(company_id, invoice_number)` unique; idempotent per invoice with no gaps under retries. | › never issues duplicates or gaps |
+| M-08 | Low | API | Unvalidated input / mass assignment. | Every route validated by Zod; sync records are strict (unknown fields refused) and range-checked (no 500s on overflow); 1 MB body limit; pull ≤ 500 records. | › rejects unknown fields |
+| M-09 | Low | API | Cross-origin use. | CORS limited to exact `CORS_ORIGINS`; no cookies are used. | › CORS only for configured origins |
+| M-10 | Low | Ops | Behind a load balancer every request has the LB's IP. | `TRUST_PROXY` must be set (deployment guide §3), otherwise per-IP limits are shared by all users. | — |
+
+## Accepted risks (updated)
+
+| Risk | Why accepted | Revisit |
+|---|---|---|
+| Portal refresh token in `sessionStorage` (readable by script in that tab). | Strict CSP (`script-src 'self'`), per-tab session, 12 h absolute lifetime, rotation + reuse detection; an httpOnly cookie needs same-site hosting. Firebase stored its tokens in IndexedDB, so this is no weaker. | When the portal and API share a site: move to an httpOnly `SameSite=Strict` cookie. |
+| "Duplicate tab" copies `sessionStorage`; the second tab's refresh looks like reuse and signs both out. | Fails safe. | — |
+| An email can be locked out for 15 minutes by 10 wrong passwords. | Same trade-off as Firebase's `too-many-requests`. | If abused: add CAPTCHA after failures. |
+| No App Check / Play Integrity on the API. | Was never enabled under Firebase. | Add Play Integrity verification to activation and sync. |
+| `audit_logs` content (company history) is written by the app. | Unchanged from before; trusted metadata (`pushed_by`, `device_id`, `rev`, `server_updated_at`) is set by the server. | — |
+| `createdBy` on masters/fuel is client-supplied except where the role matrix checks it. | Parity with the former rules. | — |

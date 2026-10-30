@@ -1,5 +1,5 @@
-/// Company roles (sprint doc §3.2). Mirrors `role` in
-/// `companies/{id}/companyUsers/{uid}`; Firestore rules enforce the same model.
+/// Company roles (sprint doc §3.2). Mirrors a member's `role` on the server,
+/// which enforces the same model.
 enum CompanyRole {
   owner('Owner'),
   admin('Admin'),

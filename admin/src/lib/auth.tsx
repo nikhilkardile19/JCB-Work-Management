@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router'
-import { AuthContext, useAuth, type AdminUser, type AuthService } from './authContext'
+import { AuthContext, NOT_CONFIGURED_MESSAGE, useAuth, type AdminUser, type AuthService } from './authContext'
 
-const notConfigured = new Error(
-  'Admin sign-in is not configured. Add the Firebase web app settings to admin/.env.local.',
-)
+const notConfigured = new Error(NOT_CONFIGURED_MESSAGE)
 
 export function AuthProvider({ service, children }: { service: AuthService | null; children: ReactNode }) {
   const [user, setUser] = useState<AdminUser | null>(null)
@@ -34,14 +32,22 @@ export function AuthProvider({ service, children }: { service: AuthService | nul
     [service],
   )
 
+  const resetPassword = useCallback(
+    async (token: string, password: string) => {
+      if (!service) throw notConfigured
+      await service.resetPassword(token, password)
+    },
+    [service],
+  )
+
   const signOut = useCallback(async () => {
     await service?.signOut()
     setUser(null)
   }, [service])
 
   const value = useMemo(
-    () => ({ user, initializing, configured: service !== null, signIn, sendPasswordReset, signOut }),
-    [user, initializing, service, signIn, sendPasswordReset, signOut],
+    () => ({ user, initializing, configured: service !== null, signIn, sendPasswordReset, resetPassword, signOut }),
+    [user, initializing, service, signIn, sendPasswordReset, resetPassword, signOut],
   )
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

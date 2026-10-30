@@ -23,11 +23,19 @@
 - CSS via CSS custom properties defined in `src/styles/tokens.css`.
 
 ## Commands
-| Task | Mobile (`mobile/`) | Admin (`admin/`) |
-|------|--------------------|------------------|
-| Install | `flutter pub get` | `npm install` |
-| Codegen | `dart run build_runner build -d` | — |
-| Run | `flutter run --dart-define=APP_ENV=dev` | `npm run dev` |
-| Lint | `flutter analyze` | `npm run lint` |
-| Test | `flutter test` | `npm test` |
-| Rules tests | — | `cd firebase && npm run test:rules` |
+| Task | Mobile (`mobile/`) | Admin (`admin/`) | Backend (`backend/`) |
+|------|--------------------|------------------|----------------------|
+| Install | `flutter pub get` | `npm install` | `npm ci` |
+| Codegen | `dart run build_runner build -d` | — | `npx prisma generate` |
+| Run | `flutter run --dart-define=APP_ENV=dev` | `npm run dev` | `npm run dev` |
+| Lint / types | `flutter analyze` | `npm run lint` | `npm run typecheck` |
+| Test | `flutter test` | `npm test` | `npm test` (needs `TEST_DATABASE_URL`) |
+| DB migration | — | — | `npm run db:migrate -- --name <change>` |
+
+## Backend
+- Every route is declared with `api.route()` (`src/lib/http.ts`): its Zod
+  schemas validate the request and generate the OpenAPI document.
+- Never trust client-sent roles, company or license state; read them from
+  PostgreSQL (`modules/companies/access.ts`, `modules/admin/adminAccess.ts`).
+- Money: `BIGINT` paise. Readings/litres: `INTEGER` hundredths. No floats.
+- A schema change needs a migration; CI fails on drift.

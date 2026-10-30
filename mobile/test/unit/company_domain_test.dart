@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:jcb_work_management/features/auth/data/firebase_auth_repository.dart';
+import 'package:jcb_work_management/core/network/api_exception.dart';
+import 'package:jcb_work_management/features/auth/data/http_auth_repository.dart';
 import 'package:jcb_work_management/features/company/domain/company_validators.dart';
 import 'package:jcb_work_management/features/company/domain/permissions.dart';
 
@@ -87,14 +88,44 @@ void main() {
   });
 
   test('auth error codes map to friendly messages', () {
+    ApiException refused(int status, String code, [String? reason]) =>
+        ApiException(status, code, reason, 'server text', const {});
+
     expect(
-      FirebaseAuthRepository.messageFor('invalid-credential'),
+      HttpAuthRepository.messageFor(
+        refused(401, 'unauthenticated', 'invalid_credentials'),
+      ),
       'Incorrect email or password.',
     );
     expect(
-      FirebaseAuthRepository.messageFor('network-request-failed'),
-      contains('internet'),
+      HttpAuthRepository.messageFor(
+        refused(403, 'permission_denied', 'user_disabled'),
+      ),
+      'This account has been disabled. Contact your administrator.',
     );
-    expect(FirebaseAuthRepository.messageFor('???'), contains('try again'));
+    expect(
+      HttpAuthRepository.messageFor(
+        const ApiUnavailable('rate limited', statusCode: 429),
+      ),
+      'Too many attempts. Wait a few minutes and try again.',
+    );
+    expect(
+      HttpAuthRepository.messageFor(const ApiUnavailable('offline')),
+      'No internet connection. Connect and try again.',
+    );
+    expect(
+      HttpAuthRepository.messageFor(refused(400, 'invalid_argument')),
+      'That email address is not valid.',
+    );
+    expect(
+      HttpAuthRepository.messageFor(
+        const ApiUnavailable('boom', statusCode: 500),
+      ),
+      contains('try again'),
+    );
+    expect(
+      HttpAuthRepository.messageFor(StateError('?')),
+      contains('try again'),
+    );
   });
 }

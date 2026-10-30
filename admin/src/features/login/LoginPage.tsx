@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
 import { Icon } from '../../components/Icon'
 import { Button, TextField } from '../../components/ui'
-import { useAuth } from '../../lib/authContext'
+import { NOT_CONFIGURED_MESSAGE, useAuth } from '../../lib/authContext'
 import { validators } from '../../lib/validators'
 import logoUrl from './login-logo.webp'
 import './login.css'
@@ -102,7 +102,7 @@ export function LoginPage() {
           {!configured && (
             <div className="login-error" role="alert">
               <Icon name="alert" />
-              Admin sign-in is not configured. Add the Firebase web app settings to admin/.env.local (see .env.example).
+              {NOT_CONFIGURED_MESSAGE}
             </div>
           )}
           {notice && (

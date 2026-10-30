@@ -1,0 +1,129 @@
+{
+  "format": "jcb-firestore-export",
+  "formatVersion": 1,
+  "projectId": "demo-jcb-export",
+  "emulator": {
+    "firestore": null,
+    "auth": null
+  },
+  "startedAt": "2026-10-30T06:00:00.000Z",
+  "exportedAt": "2026-10-30T06:00:05.000Z",
+  "tool": {
+    "name": "jcb-firestore-export",
+    "version": "fixture (hand-written)"
+  },
+  "counts": {
+    "__auth__": 9,
+    "appConfig": 1,
+    "auditEvents": 7,
+    "companies": 2,
+    "companies/*/auditLogs": 2,
+    "companies/*/authorizedDevices": 4,
+    "companies/*/clients": 3,
+    "companies/*/companyUsers": 7,
+    "companies/*/counters": 1,
+    "companies/*/deviceReplacementRequests": 2,
+    "companies/*/fuelEntries": 3,
+    "companies/*/invoiceNumbers": 3,
+    "companies/*/invoices": 3,
+    "companies/*/licenses": 2,
+    "companies/*/machines": 2,
+    "companies/*/operators": 1,
+    "companies/*/payments": 3,
+    "companies/*/petrolPumps": 1,
+    "companies/*/sites": 2,
+    "companies/*/workLogs": 7,
+    "developerAdmins": 2,
+    "rateLimits": 1
+  },
+  "files": {
+    "__auth__": {
+      "file": "auth-users.ndjson",
+      "count": 9
+    },
+    "appConfig": {
+      "file": "appConfig.ndjson",
+      "count": 1
+    },
+    "auditEvents": {
+      "file": "auditEvents.ndjson",
+      "count": 7
+    },
+    "companies": {
+      "file": "companies.ndjson",
+      "count": 2
+    },
+    "companies/*/auditLogs": {
+      "file": "companies.auditLogs.ndjson",
+      "count": 2
+    },
+    "companies/*/authorizedDevices": {
+      "file": "companies.authorizedDevices.ndjson",
+      "count": 4
+    },
+    "companies/*/clients": {
+      "file": "companies.clients.ndjson",
+      "count": 3
+    },
+    "companies/*/companyUsers": {
+      "file": "companies.companyUsers.ndjson",
+      "count": 7
+    },
+    "companies/*/counters": {
+      "file": "companies.counters.ndjson",
+      "count": 1
+    },
+    "companies/*/deviceReplacementRequests": {
+      "file": "companies.deviceReplacementRequests.ndjson",
+      "count": 2
+    },
+    "companies/*/fuelEntries": {
+      "file": "companies.fuelEntries.ndjson",
+      "count": 3
+    },
+    "companies/*/invoiceNumbers": {
+      "file": "companies.invoiceNumbers.ndjson",
+      "count": 3
+    },
+    "companies/*/invoices": {
+      "file": "companies.invoices.ndjson",
+      "count": 3
+    },
+    "companies/*/licenses": {
+      "file": "companies.licenses.ndjson",
+      "count": 2
+    },
+    "companies/*/machines": {
+      "file": "companies.machines.ndjson",
+      "count": 2
+    },
+    "companies/*/operators": {
+      "file": "companies.operators.ndjson",
+      "count": 1
+    },
+    "companies/*/payments": {
+      "file": "companies.payments.ndjson",
+      "count": 3
+    },
+    "companies/*/petrolPumps": {
+      "file": "companies.petrolPumps.ndjson",
+      "count": 1
+    },
+    "companies/*/sites": {
+      "file": "companies.sites.ndjson",
+      "count": 2
+    },
+    "companies/*/workLogs": {
+      "file": "companies.workLogs.ndjson",
+      "count": 7
+    },
+    "developerAdmins": {
+      "file": "developerAdmins.ndjson",
+      "count": 2
+    },
+    "rateLimits": {
+      "file": "rateLimits.ndjson",
+      "count": 1
+    }
+  }
+}

@@ -372,6 +372,24 @@ void main() {
     await small.db.close();
   });
 
+  test('cursors saved before the REST server are ignored', () async {
+    for (var i = 0; i < 3; i++) {
+      await a.masters.save(MasterKind.operators, scope, {
+        'name': 'Operator $i',
+      });
+    }
+    await a.sync();
+    // A Firestore-era cursor held a microsecond timestamp; read as a change
+    // sequence number it would skip every record.
+    await b.db.writeSetting(
+      'sync_cursor:$co:operators',
+      '${DateTime.now().microsecondsSinceEpoch}|zzz',
+    );
+    await b.sync();
+    expect(await b.db.select(b.db.operators).get(), hasLength(3));
+    expect(await b.db.readSetting('sync_cursor_v2:$co:operators'), isNotNull);
+  });
+
   test('fuel entries sync; reconciliation counts match', () async {
     final (_, _, m) = await seedMasters(a);
     final pump = await a.masters.save(MasterKind.petrolPumps, scope, {

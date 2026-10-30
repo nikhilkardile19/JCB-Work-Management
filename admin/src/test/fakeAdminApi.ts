@@ -15,12 +15,12 @@ import {
 const DAY = 86_400_000
 
 function paginate<T>(rows: T[], after: unknown): Page<T> {
-  const start = typeof after === 'number' ? after : 0
+  const start = typeof after === 'string' ? Number(after) : 0
   const items = rows.slice(start, start + PAGE_SIZE)
-  return { items, next: start + PAGE_SIZE < rows.length ? start + PAGE_SIZE : null }
+  return { items, next: start + PAGE_SIZE < rows.length ? String(start + PAGE_SIZE) : null }
 }
 
-/** In-memory stand-in for Firestore + the admin Cloud Functions. */
+/** In-memory stand-in for the `/admin` REST API. */
 export class FakeAdminApi implements AdminApi {
   profile: AdminProfile = { uid: 'admin', email: 'admin@jcbworks.in', role: 'super', permissions: [] }
   companies: Company[] = []

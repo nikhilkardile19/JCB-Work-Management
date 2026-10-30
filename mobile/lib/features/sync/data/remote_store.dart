@@ -1,13 +1,15 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../core/network/api_client.dart';
+import '../../../core/network/api_exception.dart';
 
-/// Position in a collection's change feed: server update time + doc ID.
+/// Position in a collection's change feed: the server's per-company change
+/// sequence number of the last record seen, plus that record's ID.
 class SyncCursor {
-  const SyncCursor(this.micros, this.id);
+  const SyncCursor(this.position, this.id);
 
-  final int micros;
+  final int position;
   final String id;
 
-  String encode() => '$micros|$id';
+  String encode() => '$position|$id';
 
   static SyncCursor? decode(String? s) {
     if (s == null) return null;
@@ -70,10 +72,11 @@ class SyncUnavailable implements Exception {
   String toString() => message;
 }
 
-/// Server side of sync. Firestore in the app; in-memory in tests.
+/// Server side of sync. The REST API in the app; in-memory in tests.
 abstract interface class RemoteStore {
   /// Writes [data] if the server is still at [baseRev] (null = should not
-  /// exist yet), or unconditionally when [force] is true.
+  /// exist yet), or unconditionally when [force] is true (where the server
+  /// allows it).
   Future<PushResult> push({
     required String companyId,
     required String collection,
@@ -97,16 +100,20 @@ abstract interface class RemoteStore {
 /// Metadata the sync layer adds to every document.
 const syncMetaKeys = {'rev', 'serverUpdatedAt', 'pushedBy', 'deviceId'};
 
-/// Firestore layout: `companies/{companyId}/{collection}/{id}`.
-class FirestoreRemoteStore implements RemoteStore {
-  FirestoreRemoteStore(this._fs);
+/// `PUT|GET /companies/:companyId/sync/:collection[/:id]` (contract, "offline
+/// sync").
+class HttpRemoteStore implements RemoteStore {
+  HttpRemoteStore(this._api);
 
-  final FirebaseFirestore _fs;
+  final ApiClient _api;
 
-  CollectionReference<Map<String, dynamic>> _col(
-    String companyId,
-    String collection,
-  ) => _fs.collection('companies').doc(companyId).collection(collection);
+  /// 403 reasons that refuse the whole pass, not just one record: records
+  /// stay `pending` until access is restored.
+  static const passRefusals = {
+    'not_member',
+    'company_inactive',
+    'device_not_licensed',
+  };
 
   static Map<String, dynamic> _business(Map<String, dynamic> d) =>
       Map.of(d)..removeWhere((k, _) => syncMetaKeys.contains(k));
@@ -122,36 +129,40 @@ class FirestoreRemoteStore implements RemoteStore {
     required String deviceId,
     bool force = false,
   }) async {
-    final ref = _col(companyId, collection).doc(id);
+    if (force) {
+      throw ArgumentError.value(
+        force,
+        'force',
+        'The server refuses unconditional writes',
+      );
+    }
     try {
-      return await _fs.runTransaction<PushResult>((tx) async {
-        final snap = await tx.get(ref);
-        final serverRev = snap.exists
-            ? (snap.data()!['rev'] as num).toInt()
-            : null;
-        if (!force && serverRev != baseRev) {
-          return PushConflict(
-            serverRev ?? 0,
-            _business(snap.data() ?? const {}),
-          );
-        }
-        final rev = (serverRev ?? 0) + 1;
-        tx.set(ref, {
-          ...data,
-          'rev': rev,
-          'serverUpdatedAt': FieldValue.serverTimestamp(),
-          'pushedBy': userId,
-          'deviceId': deviceId,
-        });
-        return PushAccepted(rev);
-      }, timeout: const Duration(seconds: 20));
-    } on FirebaseException catch (e) {
-      if (e.code == 'permission-denied') {
-        return const PushRejected(
-          'The server refused this change (permission or validation).',
-        );
-      }
-      throw SyncUnavailable(e.message ?? e.code);
+      final json = await _api.put(
+        apiPath(['companies', companyId, 'sync', collection, id]),
+        // Revisions start at 1, so 0 (a conflict on a missing record) means
+        // "should not exist yet".
+        body: {'baseRev': baseRev == 0 ? null : baseRev, 'data': data},
+        headers: {'X-Device-Id': deviceId},
+      );
+      return PushAccepted((json['rev'] as num).toInt());
+    } on ApiException catch (e) {
+      return switch (e) {
+        ApiException(statusCode: 409, code: 'conflict') => PushConflict(
+          (e.body['serverRev'] as num).toInt(),
+          _business(e.body['serverData'] as Map<String, dynamic>),
+        ),
+        // Signed out, or no access for this phone right now: stop the pass.
+        ApiException(statusCode: 401) => throw SyncUnavailable(e.message),
+        ApiException(statusCode: 403, :final reason?)
+            when passRefusals.contains(reason) =>
+          throw SyncUnavailable(e.message),
+        ApiException(statusCode: 400 || 403 || 404 || 409) => PushRejected(
+          e.message,
+        ),
+        _ => throw SyncUnavailable(e.message),
+      };
+    } on ApiUnavailable catch (e) {
+      throw SyncUnavailable(e.message);
     }
   }
 
@@ -162,35 +173,27 @@ class FirestoreRemoteStore implements RemoteStore {
     required SyncCursor? after,
     required int limit,
   }) async {
-    Query<Map<String, dynamic>> q = _col(
-      companyId,
-      collection,
-    ).orderBy('serverUpdatedAt').orderBy(FieldPath.documentId).limit(limit);
-    if (after != null) {
-      q = q.startAfter([
-        Timestamp.fromMicrosecondsSinceEpoch(after.micros),
-        after.id,
-      ]);
-    }
     try {
-      final snap = await q.get(const GetOptions(source: Source.server));
+      final json = await _api.get(
+        apiPath(['companies', companyId, 'sync', collection]),
+        query: {'after': ?after?.encode(), 'limit': limit},
+      );
       return [
-        for (final d in snap.docs)
-          if (d.data()['serverUpdatedAt'] is Timestamp)
-            RemoteDoc(
-              id: d.id,
-              rev: (d.data()['rev'] as num).toInt(),
-              data: _business(d.data()),
-              cursor: SyncCursor(
-                (d.data()['serverUpdatedAt'] as Timestamp)
-                    .microsecondsSinceEpoch,
-                d.id,
-              ),
-            ),
+        for (final item in (json['items'] as List).cast<Json>())
+          RemoteDoc(
+            id: item['id'] as String,
+            rev: (item['rev'] as num).toInt(),
+            data: _business(item['data'] as Map<String, dynamic>),
+            cursor: SyncCursor.decode(item['cursor'] as String)!,
+          ),
       ];
-    } on FirebaseException catch (e) {
-      if (e.code == 'permission-denied') return const [];
-      throw SyncUnavailable(e.message ?? e.code);
+    } on ApiException catch (e) {
+      // Not allowed to read this collection (e.g. billing for an operator):
+      // nothing to download.
+      if (e.statusCode == 403) return const [];
+      throw SyncUnavailable(e.message);
+    } on ApiUnavailable catch (e) {
+      throw SyncUnavailable(e.message);
     }
   }
 }

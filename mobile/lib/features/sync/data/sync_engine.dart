@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:uuid/uuid.dart';
 
 import '../../../data/local/app_database.dart';
@@ -17,7 +18,7 @@ enum ConflictPolicy {
   appendOnly,
 }
 
-/// How one local table maps to a Firestore collection.
+/// How one local table maps to a server sync collection.
 class SyncSpec<D extends DataClass> {
   const SyncSpec({
     required this.collection,
@@ -294,7 +295,7 @@ class SyncEngine {
         await _markSynced(spec, companyId, local, rev);
         report.pushed++;
       case PushConflict(:final serverRev, :final serverData):
-        if (_same(payload, serverData) ||
+        if (sameContent(payload, serverData) ||
             spec.policy == ConflictPolicy.appendOnly) {
           // Our earlier write landed but the reply was lost, or a duplicate.
           await _markSynced(spec, companyId, local, serverRev);
@@ -376,14 +377,32 @@ class SyncEngine {
     }
   }
 
-  static bool _same(Map<String, dynamic> a, Map<String, dynamic> b) {
+  /// Whether a pushed record and the server's copy hold the same business
+  /// data, ignoring edit bookkeeping (`version`, `updatedAt`, `updatedBy`).
+  ///
+  /// Structural: map key order doesn't matter (a missing key equals null),
+  /// lists compare in order, and numbers by value (`5 == 5.0`), since JSON
+  /// round-trips don't preserve key order or int/double.
+  @visibleForTesting
+  static bool sameContent(Map<String, dynamic> a, Map<String, dynamic> b) {
     final keys = {...a.keys, ...b.keys}
       ..removeAll({'version', 'updatedAt', 'updatedBy'});
-    for (final k in keys) {
-      if (jsonEncode(a[k]) != jsonEncode(b[k])) return false;
-    }
-    return true;
+    return keys.every((k) => _deepEquals(a[k], b[k]));
   }
+
+  static bool _deepEquals(Object? a, Object? b) => switch ((a, b)) {
+    // num == compares by value across int and double.
+    (final num x, final num y) => x == y,
+    (final Map<Object?, Object?> x, final Map<Object?, Object?> y) => {
+      ...x.keys,
+      ...y.keys,
+    }.every((k) => _deepEquals(x[k], y[k])),
+    (final List<Object?> x, final List<Object?> y) =>
+      x.length == y.length &&
+          Iterable<int>.generate(x.length)
+              .every((i) => _deepEquals(x[i], y[i])),
+    _ => a == b,
+  };
 
   Future<Map<String, dynamic>> _toRemote(
     SyncSpec<DataClass> spec,
@@ -470,8 +489,11 @@ class SyncEngine {
 
   // --- Pull -------------------------------------------------------------------
 
+  /// `v2`: cursors are now the REST server's per-company sequence numbers.
+  /// Cursors saved against Firestore held microsecond timestamps and would
+  /// hide every change, so they are not reused.
   String _cursorKey(String companyId, String collection) =>
-      'sync_cursor:$companyId:$collection';
+      'sync_cursor_v2:$companyId:$collection';
 
   Future<void> _pullAll(
     SyncSpec<DataClass> spec,

@@ -9,12 +9,15 @@ import { ReplacementRequestsPage } from '../features/devices/ReplacementRequests
 import { LicenseDetailPage } from '../features/licenses/LicenseDetailPage'
 import { LicensesPage } from '../features/licenses/LicensesPage'
 import { LoginPage } from '../features/login/LoginPage'
+import { ResetPasswordPage } from '../features/login/ResetPasswordPage'
 import { NotFoundPage } from '../features/sections/NotFoundPage'
 import { RequireAuth } from '../lib/auth'
 import { AppLayout } from './AppLayout'
 
 const routes: RouteObject[] = [
   { path: '/login', element: <LoginPage /> },
+  // Public: the emailed reset link lands here (admins and app users).
+  { path: '/reset-password', element: <ResetPasswordPage /> },
   {
     path: '/',
     element: (

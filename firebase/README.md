@@ -1,77 +1,26 @@
-# Firebase backend
+# Firebase Hosting (admin portal only)
 
-Project: **jcb-work-management** (single project used as `dev` until staging/prod exist).
+Firebase is used **only** to serve the static developer admin portal
+(`admin/`). Authentication, data and server logic moved to the Node.js +
+PostgreSQL API in `backend/` (ADR 0004); Firestore rules and Cloud Functions
+were removed in that migration and remain in git history.
 
-## Commands (run in this folder)
+Project: **jcb-work-management** (alias `dev` in `.firebaserc`).
 
-| Task | Command |
-|------|---------|
-| Install | `npm install` |
-| Security Rules tests (emulator, no real data) | `npm run test:rules` |
-| Local emulators | `npm run emulators` |
-| Deploy rules + indexes | `npx firebase login` once, then `npm run deploy:rules` |
-| Cloud Functions tests (emulator) | `npm install --prefix functions && npm run test:functions` |
-| Deploy Cloud Functions | `npm run deploy:functions` (needs the Blaze plan) |
-| Deploy admin portal (Hosting) | `npm run deploy:hosting` (builds `admin/` first; needs `admin/.env.local`) |
+## Deploy the portal
 
-Every push to `main` also deploys the admin portal automatically (CI job
-`deploy-hosting`, after the admin lint/tests/build pass). It needs two GitHub
-repository secrets (Settings → Secrets and variables → Actions):
+1. `admin/.env.local` must contain `VITE_API_BASE_URL=https://<api-host>/api/v1`.
+2. Add that API origin to `connect-src` of the `Content-Security-Policy` in
+   `firebase.json` (e.g. `connect-src 'self' https://api.example.in`).
+3. `npm ci && npm run deploy:hosting` (needs `npx firebase login` once).
 
-- `FIREBASE_SERVICE_ACCOUNT`: JSON key of a service account with the
-  **Firebase Hosting Admin** role (Google Cloud console → IAM & Admin →
-  Service accounts).
-- `ADMIN_ENV_LOCAL`: the full contents of `admin/.env.local`.
+`npm run check:portal` runs the same check as the deploy: it refuses to
+publish while the API URL is missing, not HTTPS, or not allowed by the CSP.
+Every push to `main` also deploys automatically (CI job `deploy-hosting`,
+GitHub secrets `FIREBASE_SERVICE_ACCOUNT` — Firebase Hosting Admin role only —
+and `ADMIN_ENV_LOCAL`, the contents of `admin/.env.local`).
 
-The Firestore emulator uses port **8085** (8080 is taken on the dev machine).
+Undo a bad release: `npm run hosting:rollback`.
 
-## One-time console setup (project owner)
-
-1. **Authentication → Sign-in method → Email/Password → Enable.**
-2. **Firestore Database → Create database** (production mode, region `asia-south1` recommended for India).
-3. Deploy rules and indexes: `npm run deploy:rules`. The `companyUsers.uid`
-   collection-group index is required for membership lookup.
-4. **Developer admin allowlist:** for each admin, create the user in
-   Authentication, then add a Firestore document `developerAdmins/{thatUid}`
-   with fields `email` and `role`:
-   - `role: "super"` — full access (companies, licenses, devices).
-   - `role: "support"` (or no role) — read-only, plus any grants listed in
-     `permissions` (array of `companies.manage`, `licenses.manage`,
-     `devices.revoke`).
-   Clients can never write this collection; every admin action is checked
-   again on the server and recorded in `auditEvents`.
-5. **Approving a company:** in the admin portal, Companies → Awaiting
-   approval → open the company → Approve (a reason is required and logged).
-6. **Admin portal web app:** Project settings → Add app → Web. Copy the SDK
-   config into `admin/.env.local` (template: `admin/.env.example`), or print
-   it with `npx firebase apps:sdkconfig WEB --project jcb-work-management`.
-   Then `npm run deploy:hosting`; the portal is served at
-   https://jcb-work-management.web.app. The deploy refuses to run while
-   `admin/.env.local` has no API key, so an unconfigured portal is never
-   published.
-7. **Invoice numbering:** upgrade the project to the **Blaze (pay-as-you-go)**
-   plan (required for Cloud Functions; set a budget alert), then
-   `npm run deploy:functions`. This deploys `allocateInvoiceNumber` in
-   `asia-south1`. Until it is deployed, invoices can be drafted but not
-   finalized.
-8. **Issue a license for a company:** in the admin portal, open the company →
-   Licenses → New license; the activation code is shown once. (A command-line
-   alternative needs a service-account key for the project:)
-   ```
-   cd firebase && npm --prefix functions run build
-   GOOGLE_APPLICATION_CREDENTIALS=key.json node functions/lib/cli/createLicense.js \
-     --company <companyId> --admin <yourDeveloperAdminUid> --months 12 --devices 2
-   ```
-   Give the printed activation code to the company owner; it is shown once
-   and only its hash is stored. Each phone enters it once (online).
-9. Recommended: in Google Cloud console → APIs & Services → Credentials,
-   restrict the Android API key to package `com.app.jcb_work_management`
-   with your signing certificate SHA-1.
-10. **Rate-limit cleanup (optional):** Firestore → TTL policies → add a policy
-    on collection group `rateLimits`, field `expiresAt`, so old abuse
-    counters are deleted automatically. Counters work without it.
-11. **App Check (Sprint 13, before launch):** follow
-    `docs/security-review.md` → "App Check evaluation". Enforcement is
-    switched on with `ENFORCE_APP_CHECK=true` in `functions/.env`, then
-    `npm run deploy:functions` — only after the console shows that nearly
-    all requests are verified.
+Any other static host works too: serve `admin/dist` with an SPA fallback to
+`index.html` and the same security headers as `firebase.json`.

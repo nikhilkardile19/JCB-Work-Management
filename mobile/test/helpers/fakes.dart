@@ -58,7 +58,7 @@ class FakeAuthRepository implements AuthRepository {
   }
 }
 
-/// In-memory stand-in for Firestore. Set [offline] to make calls fail.
+/// In-memory stand-in for the company API. Set [offline] to make calls fail.
 class FakeCompanyRemote implements CompanyRemoteSource {
   final memberships = <String, List<CompanyMembership>>{};
   bool offline = false;

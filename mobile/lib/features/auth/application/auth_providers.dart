@@ -1,11 +1,14 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/network/network_providers.dart';
 import '../data/auth_repository.dart';
-import '../data/firebase_auth_repository.dart';
+import '../data/http_auth_repository.dart';
 
 final authRepositoryProvider = Provider<AuthRepository>(
-  (ref) => FirebaseAuthRepository(FirebaseAuth.instance),
+  (ref) => HttpAuthRepository(
+    ref.watch(apiClientProvider),
+    ref.watch(sessionStoreProvider),
+  ),
 );
 
 final authStateProvider = StreamProvider<AppUser?>(

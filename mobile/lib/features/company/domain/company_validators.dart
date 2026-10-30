@@ -1,5 +1,5 @@
-/// Company profile validation. Keep in sync with `validCompany()` in
-/// `firebase/firestore.rules`.
+/// Company profile validation. Keep in sync with the server's company
+/// profile rules (`docs/migration/api-contract.md`).
 abstract final class CompanyValidators {
   static final _email = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
   static final _gstin = RegExp(

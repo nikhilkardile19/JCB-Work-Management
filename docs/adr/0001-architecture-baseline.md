@@ -1,5 +1,12 @@
 # ADR 0001 — Architecture baseline
 
+> **Update 2026-10-30:** Firebase Auth, Firestore and Cloud Functions were
+> replaced by the Node.js + PostgreSQL API — see
+> [ADR 0004](0004-node-postgres-backend.md). The Firebase-specific parts of
+> ADRs 0001–0003 below are kept as history; the layering, tenancy model and
+> sync protocol still apply.
+
+
 - Status: Accepted
 - Date: 2026-10-29
 

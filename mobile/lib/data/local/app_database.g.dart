@@ -13366,7 +13366,7 @@ class $SyncRecordsTable extends SyncRecords
 }
 
 class SyncRecord extends DataClass implements Insertable<SyncRecord> {
-  /// Firestore collection, e.g. `workLogs`.
+  /// Server sync collection, e.g. `workLogs`.
   final String entity;
   final String entityId;
   final String companyId;

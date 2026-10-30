@@ -4,7 +4,7 @@ import 'package:drift/drift.dart';
 /// [serverRev] is the server revision this device last saw for the record;
 /// a push only succeeds if the server is still at that revision.
 class SyncRecords extends Table {
-  /// Firestore collection, e.g. `workLogs`.
+  /// Server sync collection, e.g. `workLogs`.
   TextColumn get entity => text()();
   TextColumn get entityId => text()();
   TextColumn get companyId => text()();

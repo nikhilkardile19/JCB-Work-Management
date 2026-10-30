@@ -1,11 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/network/network_providers.dart';
 import '../../company/domain/permissions.dart';
 import '../../work/application/work_providers.dart';
 import '../data/company_users_service.dart';
 
 final companyUsersServiceProvider = Provider<CompanyUsersService>(
-  (ref) => CloudCompanyUsersService(),
+  (ref) => HttpCompanyUsersService(ref.watch(apiClientProvider)),
 );
 
 final companyMembersProvider = StreamProvider.autoDispose<List<CompanyMember>>((

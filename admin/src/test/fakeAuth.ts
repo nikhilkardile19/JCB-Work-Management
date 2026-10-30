@@ -1,10 +1,11 @@
 import type { AdminUser, AuthService } from '../lib/authContext'
-import { NOT_ADMIN_MESSAGE } from '../lib/firebaseAuthService'
+import { NOT_ADMIN_MESSAGE } from '../lib/httpAuthService'
 
-/** In-memory auth with an admin allowlist, mirroring the Firebase service. */
+/** In-memory auth with an admin allowlist, mirroring the HTTP service. */
 export class FakeAuthService implements AuthService {
   private listeners = new Set<(u: AdminUser | null) => void>()
   resetEmail: string | null = null
+  resetToken: string | null = null
   private current: AdminUser | null
   private admins = new Set(['admin@jcbworks.in'])
   constructor(current: AdminUser | null = null) {
@@ -23,6 +24,9 @@ export class FakeAuthService implements AuthService {
   }
   async sendPasswordReset(email: string) {
     this.resetEmail = email
+  }
+  async resetPassword(token: string) {
+    this.resetToken = token
   }
   async signOut() {
     this.current = null

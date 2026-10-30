@@ -1,6 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
-
+import '../../../core/network/api_client.dart';
 import 'license_service.dart';
 
 enum ReplacementStatus {
@@ -41,16 +39,11 @@ abstract interface class ReplacementService {
   });
 }
 
-class CloudReplacementService implements ReplacementService {
-  CloudReplacementService({
-    FirebaseFunctions? functions,
-    FirebaseFirestore? firestore,
-  }) : _functions =
-           functions ?? FirebaseFunctions.instanceFor(region: 'asia-south1'),
-       _db = firestore ?? FirebaseFirestore.instance;
+/// `/companies/:companyId/device-replacements[/:requestId]`.
+class HttpReplacementService implements ReplacementService {
+  HttpReplacementService(this._api);
 
-  final FirebaseFunctions _functions;
-  final FirebaseFirestore _db;
+  final ApiClient _api;
 
   @override
   Future<ReplacementState> request({
@@ -61,38 +54,21 @@ class CloudReplacementService implements ReplacementService {
     required String reason,
   }) async {
     try {
-      final r = await _functions
-          .httpsCallable(
-            'requestDeviceReplacement',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 20)),
-          )
-          .call<Map<String, dynamic>>({
-            'companyId': companyId,
-            'activationCode': activationCode,
-            'newDeviceId': newDeviceId,
-            'newDeviceModel': newDeviceModel,
-            'reason': reason,
-          });
-      return ReplacementState(
-        ReplacementStatus.parse(r.data['status'] as String?),
-        requestId: r.data['requestId'] as String?,
+      final r = await _api.post(
+        apiPath(['companies', companyId, 'device-replacements']),
+        body: {
+          'activationCode': activationCode,
+          'newDeviceId': newDeviceId,
+          'newDeviceModel': newDeviceModel,
+          'reason': reason,
+        },
       );
-    } on FirebaseFunctionsException catch (e) {
-      if (e.code == 'failed-precondition' ||
-          e.code == 'invalid-argument' ||
-          e.code == 'permission-denied') {
-        final reason = e.details is Map
-            ? (e.details as Map)['reason'] as String?
-            : null;
-        throw LicenseDenied(
-          reason ?? e.code,
-          e.message ?? 'The request was refused.',
-        );
-      }
-      throw const LicenseServerUnavailable();
+      return ReplacementState(
+        ReplacementStatus.parse(r['status'] as String?),
+        requestId: r['requestId'] as String?,
+      );
     } catch (e) {
-      if (e is LicenseDenied) rethrow;
-      throw const LicenseServerUnavailable();
+      throw licenseFailure(e);
     }
   }
 
@@ -102,15 +78,16 @@ class CloudReplacementService implements ReplacementService {
     required String requestId,
   }) async {
     try {
-      final d = await _db
-          .doc('companies/$companyId/deviceReplacementRequests/$requestId')
-          .get(const GetOptions(source: Source.server));
-      return ReplacementState(
-        ReplacementStatus.parse(d.data()?['status'] as String?),
-        requestId: requestId,
-        reviewReason: d.data()?['reviewReason'] as String?,
+      final r = await _api.get(
+        apiPath(['companies', companyId, 'device-replacements', requestId]),
       );
-    } on FirebaseException {
+      return ReplacementState(
+        ReplacementStatus.parse(r['status'] as String?),
+        requestId: requestId,
+        reviewReason: r['reviewReason'] as String?,
+      );
+    } catch (_) {
+      // Callers only expect "unavailable" here, as before.
       throw const LicenseServerUnavailable();
     }
   }

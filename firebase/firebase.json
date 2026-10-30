@@ -1,12 +1,8 @@
 {
-  "firestore": {
-    "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
-  },
   "hosting": {
     "public": "admin-dist",
     "predeploy": [
-      "grep -q '^VITE_FIREBASE_API_KEY=.' \"$PROJECT_DIR/../admin/.env.local\" || { echo 'admin/.env.local needs the Web app config (see admin/.env.example)'; exit 1; }",
+      "node \"$PROJECT_DIR/scripts/check-portal-config.mjs\"",
       "npm --prefix \"$PROJECT_DIR/../admin\" run build -- --outDir \"$PROJECT_DIR/admin-dist\" --emptyOutDir"
     ],
     "ignore": [
@@ -25,7 +21,7 @@
         "headers": [
           {
             "key": "Content-Security-Policy",
-            "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://*.googleapis.com https://*.cloudfunctions.net; frame-src https://jcb-work-management.firebaseapp.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+            "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
           },
           {
             "key": "X-Frame-Options",
@@ -70,29 +66,11 @@
     ]
   },
   "emulators": {
-    "auth": {
-      "port": 9099
-    },
-    "firestore": {
-      "port": 8085
-    },
-    "functions": {
-      "port": 5001
-    },
     "hosting": {
       "port": 5000
     },
     "ui": {
-      "enabled": true
+      "enabled": false
     }
-  },
-  "functions": [
-    {
-      "source": "functions",
-      "codebase": "default",
-      "predeploy": [
-        "npm --prefix \"$RESOURCE_DIR\" run build"
-      ]
-    }
-  ]
+  }
 }

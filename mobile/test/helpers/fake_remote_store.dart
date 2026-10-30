@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:jcb_work_management/features/sync/data/remote_store.dart';
 
 /// In-memory server shared by several "devices" in tests. Mirrors the
-/// Firestore store's revision semantics, and can simulate being offline,
+/// server's revision semantics, and can simulate being offline,
 /// rejecting writes, or losing the reply to an accepted write.
 class FakeRemoteStore implements RemoteStore {
   final docs = <String, _Doc>{}; // key: company/collection/id
@@ -103,8 +103,8 @@ class FakeRemoteStore implements RemoteStore {
         .where(
           (d) =>
               after == null ||
-              d.time > after.micros ||
-              (d.time == after.micros && d.id.compareTo(after.id) > 0),
+              d.time > after.position ||
+              (d.time == after.position && d.id.compareTo(after.id) > 0),
         )
         .take(limit)
         .map(

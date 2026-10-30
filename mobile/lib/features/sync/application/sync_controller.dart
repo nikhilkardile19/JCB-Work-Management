@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/connectivity/connectivity_provider.dart';
 import '../../../core/errors/error_log.dart';
+import '../../../core/network/network_providers.dart';
 import '../../../data/local/database_provider.dart';
 import '../../billing/domain/invoice.dart';
 import '../../license/application/license_controller.dart';
@@ -14,7 +14,7 @@ import '../data/remote_store.dart';
 import '../data/sync_engine.dart';
 
 final remoteStoreProvider = Provider<RemoteStore>(
-  (ref) => FirestoreRemoteStore(FirebaseFirestore.instance),
+  (ref) => HttpRemoteStore(ref.watch(apiClientProvider)),
 );
 
 final syncEngineProvider = Provider<SyncEngine>(

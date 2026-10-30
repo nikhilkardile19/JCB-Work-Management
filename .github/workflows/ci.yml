@@ -43,27 +43,43 @@ jobs:
       - run: npm test
       - run: npm run build
 
-  firestore-rules:
+  backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: jcb_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
-        working-directory: firebase
+        working-directory: backend
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/jcb_test
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/jcb_test
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: firebase/package-lock.json
+          cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: npm run test:rules
-      - run: npm ci --prefix functions
-      - run: npm --prefix functions run build
-      - run: npm run test:functions
+      - run: npx prisma generate
+      - run: npm run typecheck
+      - run: npx prisma migrate deploy
+      # Fails if schema.prisma changed without a migration.
+      - run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+      - run: npm test
+      - run: npm run build
 
   # Publishes the admin portal to Firebase Hosting once its checks pass on main.
   deploy-hosting:
@@ -81,7 +97,9 @@ jobs:
             admin/package-lock.json
             firebase/package-lock.json
       - run: npm ci --prefix admin
+      # firebase-tools only: Firebase Hosting serves the static portal.
       - run: npm ci --prefix firebase
+      # Must contain VITE_API_BASE_URL=https://<api-host>/api/v1
       - name: Write admin/.env.local
         run: printf '%s\n' "$ADMIN_ENV_LOCAL" > admin/.env.local
         env:
