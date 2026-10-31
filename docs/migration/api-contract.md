@@ -16,8 +16,9 @@ that exists today; nothing is invented. The mapping is in
 - IDs are strings. Existing Firestore IDs and Firebase UIDs are kept as-is;
   new server-generated IDs are UUID v4.
 - Auth: `Authorization: Bearer <accessToken>` on everything except
-  `/auth/signup`, `/auth/login`, `/auth/refresh`, `/auth/forgot-password`,
-  `/auth/reset-password` and `/health*`.
+  `/auth/signup`, `/auth/check-email`, `/auth/login-with-code`, `/auth/login`,
+  `/auth/refresh`, `/auth/forgot-password`, `/auth/reset-password` and
+  `/health*`.
 - The mobile app sends `X-Device-Id: <installation id>` on every request.
   Endpoints that act "as this phone" (sync push, invoice numbers) require it.
 - The server never trusts a client-sent role, company status, license state
@@ -60,8 +61,10 @@ Non-2xx responses (except the sync conflict below) have this body:
 
 | Method & path | Body | Response |
 |---|---|---|
-| `POST /auth/signup` | `{email, password, company: CompanyProfile}` (password ≥ 8 chars) | `201 {userId, companyId}` — the company is `pending` with the new user as owner. Does **not** sign in. |
-| `POST /auth/login` | `{email, password, client: "mobile"\|"portal"}` | `200 Session` |
+| `POST /auth/signup` | `{email, password?, company: CompanyProfile}` (password optional, ≥ 8 chars when given) | `201 {userId, companyId}` — the company is `pending` with the new user as owner. Does **not** sign in. |
+| `POST /auth/check-email` | `{email}` | `204` when the account exists and may sign in; `404 reason: "no_account"`; `403 reason: "user_disabled"` (mobile sign-in step 1) |
+| `POST /auth/login-with-code` | `{email, activationCode, deviceId, deviceModel?, platform?}` | `200 Session & {companyId, license: LicenseState \| null, activation: {reason: "device_limit", message} \| null}` — mobile sign-in step 2, no password; also activates the phone |
+| `POST /auth/login` | `{email, password, client: "mobile"\|"portal"}` | `200 Session` (portal; older app builds) |
 | `POST /auth/refresh` | `{refreshToken}` | `200 Session` (old refresh token is revoked — rotation) |
 | `POST /auth/logout` | `{refreshToken}` | `204` (revokes that session) |
 | `GET /auth/me` | — | `200 {id, email, developerAdmin: {role, permissions} \| null}` |
@@ -85,12 +88,25 @@ excluded from backups).
 
 Sign-up: an email that already has an account (with or without a password)
 gets `409 already_exists` `reason: "email_taken"`; 20 sign-ups per client IP
-per hour. The mobile onboarding is: sign up → developer admin approves
-(`POST /admin/companies/:companyId/approve`), which emails the activation
-code to the owner → owner signs in → enters the code → dashboard.
+per hour. The mobile onboarding is: sign up (no password) → developer admin
+approves (`POST /admin/companies/:companyId/approve`), which emails the
+activation code to the owner → owner enters their email (`/auth/check-email`)
+→ enters the code (`/auth/login-with-code`) → dashboard.
+
+Sign-in with a code: the code must belong to a license of a company the user
+is an active member of. The phone is activated with the same rules as
+`/companies/:companyId/license/activate` (a code works once; afterwards only
+the same user on the same phone can sign in with it again, e.g. after signing
+out), and a mobile session starts. A wrong email/code pair is `401
+unauthenticated` `reason: "invalid_code"` and counts towards the per-email and
+per-IP sign-in failure limits. Other activation refusals are `409
+failed_precondition` with their `reason` and start no session, except
+`device_limit`: that one signs in with `license: null` and `activation` set, so
+the app can file a device replacement request. `/auth/check-email` is limited to
+30 checks per client IP per 15 minutes.
 
 Login/refresh failures: `401 unauthenticated` with `reason` one of
-`invalid_credentials`, `invalid_refresh_token`; `403 permission_denied`
+`invalid_credentials`, `invalid_code`, `invalid_refresh_token`; `403 permission_denied`
 `reason: "user_disabled"`; `429` when rate limited.
 
 Refresh-token reuse: presenting an already-rotated token revokes the whole

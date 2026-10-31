@@ -10,7 +10,7 @@ it can be changed without rework.
 
 | # | Decision | Proposed default | Status | Where it lives |
 |---|----------|------------------|--------|----------------|
-| 1 | Login method | Email + password via the project's own API (Argon2id, rotating refresh tokens — ADR 0004; Firebase Auth retired 2026-10-30). Phone OTP can be added later without data-model change. | PROPOSED | `backend/src/modules/auth/` |
+| 1 | Login method | Mobile app: email, then the company's activation code — no password (`/auth/check-email`, `/auth/login-with-code`, 2026-10-31); signing in also activates the phone. Admin portal: email + password (Argon2id). Both use the project's own API with rotating refresh tokens (ADR 0004; Firebase Auth retired 2026-10-30). | PROPOSED | `backend/src/modules/auth/` |
 | 2 | Owners per company | Multiple admins allowed (`role = owner` or `admin` in `companyUsers`). | PROPOSED | data model |
 | 3 | Max devices / shared accounts | `maxDevices` per license, default 2. One account per person; shared logins discouraged. | PROPOSED | license doc |
 | 4 | License model | Custom validity (`validFrom`/`validUntil`); annual is the default template in the admin portal. | PROPOSED | license doc |

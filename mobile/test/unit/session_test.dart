@@ -102,7 +102,7 @@ void main() {
       expect(sessionRedirect(SessionError(Exception()), Routes.splash), isNull);
     });
 
-    test('signed out may only see login, sign-up and password reset', () {
+    test('signed out may only see the email and code steps and sign-up', () {
       const s = SessionSignedOut();
       for (final r in [
         Routes.dashboard,
@@ -113,7 +113,7 @@ void main() {
         expect(sessionRedirect(s, r), Routes.login, reason: r);
       }
       expect(sessionRedirect(s, Routes.login), isNull);
-      expect(sessionRedirect(s, Routes.forgotPassword), isNull);
+      expect(sessionRedirect(s, Routes.loginCode), isNull);
       expect(sessionRedirect(s, Routes.signUp), isNull);
     });
 

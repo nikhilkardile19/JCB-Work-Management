@@ -97,6 +97,110 @@
           "user"
         ]
       },
+      "CodeLoginSession": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Session"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "companyId": {
+                "type": "string",
+                "description": "The company whose license the code belongs to"
+              },
+              "license": {
+                "$ref": "#/components/schemas/LicenseState"
+              },
+              "activation": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "device_limit"
+                    ]
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason",
+                  "message"
+                ],
+                "description": "Signed in, but this phone was not activated (all devices in use): offer a device replacement"
+              }
+            },
+            "required": [
+              "companyId",
+              "license",
+              "activation"
+            ]
+          }
+        ]
+      },
+      "LicenseState": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "licenseId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "licenseStatus": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "active",
+              "suspended",
+              "expired",
+              "revoked",
+              "not_started",
+              "none"
+            ]
+          },
+          "deviceStatus": {
+            "type": "string",
+            "enum": [
+              "active",
+              "revoked",
+              "unknown"
+            ]
+          },
+          "validUntil": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "maxDevices": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "serverTime": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "licenseId",
+          "licenseStatus",
+          "deviceStatus",
+          "validUntil",
+          "maxDevices",
+          "serverTime"
+        ],
+        "description": "This phone's license state; null when `activation` is set"
+      },
       "CurrentUser": {
         "type": "object",
         "properties": {
@@ -268,60 +372,6 @@
           "email",
           "role",
           "status"
-        ]
-      },
-      "LicenseState": {
-        "type": "object",
-        "properties": {
-          "licenseId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "licenseStatus": {
-            "type": "string",
-            "enum": [
-              "pending",
-              "active",
-              "suspended",
-              "expired",
-              "revoked",
-              "not_started",
-              "none"
-            ]
-          },
-          "deviceStatus": {
-            "type": "string",
-            "enum": [
-              "active",
-              "revoked",
-              "unknown"
-            ]
-          },
-          "validUntil": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "maxDevices": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "serverTime": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "licenseId",
-          "licenseStatus",
-          "deviceStatus",
-          "validUntil",
-          "maxDevices",
-          "serverTime"
         ]
       },
       "SyncPage": {
@@ -852,7 +902,7 @@
           "Auth"
         ],
         "summary": "Create an account and its company (pending approval); does not sign in",
-        "description": "The company starts `pending` with the new user as owner. When a developer admin approves it, the activation code is emailed to this address. An email that already has an account gets `409 already_exists` with `reason: \"email_taken\"`.",
+        "description": "The company starts `pending` with the new user as owner. When a developer admin approves it, the activation code is emailed to this address; the owner then signs in with `/auth/login-with-code`. The password is optional (the mobile app no longer asks for one). An email that already has an account gets `409 already_exists` with `reason: \"email_taken\"`.",
         "security": [],
         "requestBody": {
           "content": {
@@ -924,7 +974,6 @@
                 },
                 "required": [
                   "email",
-                  "password",
                   "company"
                 ]
               }
@@ -1060,6 +1109,204 @@
           },
           "403": {
             "description": "Not allowed (`permission_denied`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited (`resource_exhausted`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected error (`internal`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/check-email": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Mobile sign-in step 1: is there an account for this email?",
+        "description": "`204` when the account exists and may sign in; `404 not_found` with `reason: \"no_account\"`; `403` with `reason: \"user_disabled\"`. 30 checks per client IP per 15 minutes.",
+        "security": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                  }
+                },
+                "required": [
+                  "email"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Success (no content)"
+          },
+          "400": {
+            "description": "Validation failed (`invalid_argument`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`permission_denied`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited (`resource_exhausted`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected error (`internal`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login-with-code": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Mobile sign-in step 2: email and activation code (no password); activates this phone",
+        "description": "The code must belong to a license of a company the user is an active member of. The phone is activated on that license (same rules as `/companies/:companyId/license/activate`: a code works once, then only for the same user on the same phone) and a mobile session starts. A wrong email/code pair is `401 unauthenticated` with `reason: \"invalid_code\"` and counts towards the sign-in failure limits. Other refusals are `409 failed_precondition` with the activation `reason` and start no session — except `device_limit`, which signs in and returns `activation` instead, so the app can request a replacement.",
+        "security": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                  },
+                  "activationCode": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40
+                  },
+                  "deviceId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[^/\\s]+$"
+                  },
+                  "deviceModel": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "platform": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 20
+                  }
+                },
+                "required": [
+                  "email",
+                  "activationCode",
+                  "deviceId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeLoginSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed (`invalid_argument`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`permission_denied`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State conflict (`already_exists`, `failed_precondition`, `conflict`)",
             "content": {
               "application/json": {
                 "schema": {

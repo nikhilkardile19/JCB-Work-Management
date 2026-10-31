@@ -1,31 +1,43 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jcb_work_management/features/dashboard/dashboard_screen.dart';
+import 'package:jcb_work_management/features/license/presentation/activation_screen.dart';
 
 import '../helpers/pump_app.dart';
 
-Future<void> signIn(WidgetTester tester, {String password = 'secret1'}) async {
-  await tester.enterText(
-    find.byKey(const Key('login_email')),
-    'owner@jcbworks.in',
-  );
-  await tester.enterText(find.byKey(const Key('login_password')), password);
+const ownerEmail = 'owner@jcbworks.in';
+
+/// Step 1: enters [email] and continues.
+Future<void> enterEmail(
+  WidgetTester tester, {
+  String email = ownerEmail,
+}) async {
+  await tester.enterText(find.byKey(const Key('login_email')), email);
   await tapAndSettle(tester, find.byKey(const Key('login_submit')));
 }
 
-/// Fills the sign-up form; [confirm] defaults to [password].
+/// Step 2: enters [code] and signs in.
+Future<void> enterCode(WidgetTester tester, String code) async {
+  await tester.enterText(find.byKey(const Key('code_activation')), code);
+  await tapAndSettle(tester, find.byKey(const Key('code_submit')));
+}
+
+/// The owner has an account in company `a`; the license is driven by the
+/// real controller, so the dashboard proves the phone was activated.
+TestHarness ownerHarness() {
+  final h = TestHarness(licensed: false);
+  h.remote.memberships[FakeAuthRepository.userFor(ownerEmail).uid] = [
+    membership('a', 'Sai Earthmovers'),
+  ];
+  return h;
+}
+
+/// Fills the sign-up form.
 Future<void> fillSignUp(
   WidgetTester tester, {
   String email = 'new@saiearth.in',
-  String password = 'secret123',
-  String? confirm,
 }) async {
   await tester.enterText(find.byKey(const Key('signup_email')), email);
-  await tester.enterText(find.byKey(const Key('signup_password')), password);
-  await tester.enterText(
-    find.byKey(const Key('signup_confirm')),
-    confirm ?? password,
-  );
   await tester.enterText(
     find.byKey(const Key('company_name')),
     'Sai Earthmovers',
@@ -43,60 +55,115 @@ Future<void> fillSignUp(
 }
 
 void main() {
-  testWidgets('unauthenticated user lands on login', (tester) async {
+  testWidgets('unauthenticated user lands on the email step, no password', (
+    tester,
+  ) async {
     await pumpApp(tester);
     expect(find.text('Welcome back'), findsOneWidget);
+    expect(find.byKey(const Key('login_email')), findsOneWidget);
+    expect(find.textContaining('Password'), findsNothing);
+    expect(find.textContaining('Forgot'), findsNothing);
     expect(find.byType(NavigationBar), findsNothing);
     await unmount(tester);
   });
 
-  testWidgets('login validates input before submitting', (tester) async {
+  testWidgets('the email step validates before asking for the code', (
+    tester,
+  ) async {
     await pumpApp(tester);
     await tapAndSettle(tester, find.byKey(const Key('login_submit')));
     expect(find.text('Enter your email address'), findsOneWidget);
-    expect(find.text('Enter your password'), findsOneWidget);
 
-    await tester.enterText(find.byKey(const Key('login_email')), 'bad');
-    await tester.enterText(find.byKey(const Key('login_password')), '123');
-    await tapAndSettle(tester, find.byKey(const Key('login_submit')));
+    await enterEmail(tester, email: 'bad');
     expect(find.textContaining('valid email'), findsOneWidget);
-    expect(find.textContaining('at least 6'), findsOneWidget);
+    expect(find.text('Enter activation code'), findsNothing);
     await unmount(tester);
   });
 
-  testWidgets('wrong password shows the server error inline', (tester) async {
-    await pumpApp(tester);
-    await signIn(tester, password: wrongPassword);
-    expect(find.text('Incorrect email or password.'), findsOneWidget);
-    expect(find.text('Welcome back'), findsOneWidget);
+  testWidgets('an email without an account is explained on the email step', (
+    tester,
+  ) async {
+    final h = TestHarness()..auth.unknownEmails.add('nobody@jcbworks.in');
+    await pumpApp(tester, harness: h);
+    await enterEmail(tester, email: 'Nobody@jcbworks.in');
+    expect(find.text(FakeAuthRepository.noAccount.message), findsOneWidget);
+    expect(find.text('Enter activation code'), findsNothing);
     await unmount(tester);
   });
 
-  testWidgets('forgot password sends a reset link', (tester) async {
-    final h = await pumpApp(tester);
-    await tapAndSettle(tester, find.byKey(const Key('login_forgot')));
-    expect(find.text('Reset password'), findsOneWidget);
-    await tester.enterText(
-      find.byKey(const Key('forgot_email')),
-      'owner@jcbworks.in',
+  testWidgets('email, then activation code, goes straight to the dashboard', (
+    tester,
+  ) async {
+    final h = ownerHarness();
+    await pumpApp(tester, harness: h);
+    await enterEmail(tester, email: ' $ownerEmail ');
+    expect(find.text('Enter activation code'), findsOneWidget);
+    expect(find.text('Signing in as $ownerEmail'), findsOneWidget);
+
+    // Validation first.
+    await tapAndSettle(tester, find.byKey(const Key('code_submit')));
+    expect(find.text('Enter your activation code'), findsOneWidget);
+    await enterCode(tester, 'JCBW-AAAA');
+    expect(find.textContaining('full code'), findsOneWidget);
+    expect(h.auth.lastCodeSignIn, isNull);
+
+    // A wrong code keeps the user here with the server's message.
+    await enterCode(tester, 'JCBW-AAAA-BBBB-CCCC');
+    expect(
+      find.text('That activation code is not valid for this email address.'),
+      findsOneWidget,
     );
-    await tapAndSettle(tester, find.byKey(const Key('forgot_submit')));
-    expect(find.text('Check your email'), findsOneWidget);
-    expect(h.auth.lastResetEmail, 'owner@jcbworks.in');
-    await tapAndSettle(tester, find.text('Back to sign in'));
-    expect(find.text('Welcome back'), findsOneWidget);
+    expect(h.auth.currentUid, isNull);
+
+    await enterCode(tester, validActivationCode.toLowerCase());
+    expect(find.byType(DashboardScreen), findsOneWidget);
+    expect(find.byType(ActivationScreen), findsNothing);
+    expect(find.textContaining('Sai Earthmovers'), findsWidgets);
+    expect(h.auth.lastCodeSignIn?.email, ownerEmail);
+    expect(h.auth.lastCodeSignIn?.deviceId, await h.db.installationId());
     await unmount(tester);
   });
 
-  testWidgets('reset is disabled offline', (tester) async {
-    final h = await pumpApp(tester, online: false);
-    await tapAndSettle(tester, find.byKey(const Key('login_forgot')));
-    await tester.enterText(find.byKey(const Key('forgot_email')), 'a@b.co');
-    await tapAndSettle(tester, find.byKey(const Key('forgot_submit')));
-    expect(h.auth.lastResetEmail, isNull);
-    expect(find.textContaining('Connect to the internet'), findsOneWidget);
+  testWidgets('the code step can go back to change the email', (tester) async {
+    await pumpApp(tester, harness: ownerHarness());
+    await enterEmail(tester);
+    await tapAndSettle(tester, find.byKey(const Key('code_change_email')));
+    expect(find.text('Welcome back'), findsOneWidget);
+    expect(find.text('Enter activation code'), findsNothing);
     await unmount(tester);
   });
+
+  testWidgets('the code step waits for internet', (tester) async {
+    final h = ownerHarness();
+    await pumpApp(tester, harness: h, online: false);
+    await enterEmail(tester);
+    expect(find.text('Waiting for internet'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('code_activation')),
+      validActivationCode,
+    );
+    await tapAndSettle(tester, find.byKey(const Key('code_submit')));
+    expect(h.auth.lastCodeSignIn, isNull);
+    await unmount(tester);
+  });
+
+  testWidgets(
+    'all devices in use: signed in and offered a replacement, code kept',
+    (tester) async {
+      final h = ownerHarness()..auth.refusalReason = 'device_limit';
+      await pumpApp(tester, harness: h);
+      await enterEmail(tester);
+      await enterCode(tester, validActivationCode);
+      expect(find.byType(ActivationScreen), findsOneWidget);
+      expect(find.textContaining('All devices allowed'), findsOneWidget);
+      expect(
+        find.byKey(const Key('activation_request_replacement')),
+        findsOneWidget,
+      );
+      expect(find.text(validActivationCode), findsOneWidget);
+      await unmount(tester);
+    },
+  );
 
   testWidgets('a new owner signs up and is told to wait for approval', (
     tester,
@@ -104,17 +171,12 @@ void main() {
     final h = await pumpApp(tester);
     await tapAndSettle(tester, find.byKey(const Key('login_sign_up')));
     expect(find.text('Create account'), findsWidgets);
+    expect(find.textContaining('Password'), findsNothing);
 
     // Validation first, account fields included.
     await tapAndSettle(tester, find.byKey(const Key('company_submit')));
     expect(find.text('Enter your email address'), findsOneWidget);
-    expect(find.text('Enter your password'), findsOneWidget);
     expect(find.text('Enter the company name'), findsOneWidget);
-
-    await fillSignUp(tester, password: 'short1', confirm: 'other12');
-    await tapAndSettle(tester, find.byKey(const Key('company_submit')));
-    expect(find.textContaining('at least 8'), findsOneWidget);
-    expect(find.text('Passwords do not match'), findsOneWidget);
     expect(h.auth.lastSignUp, isNull);
 
     await fillSignUp(tester);
@@ -123,7 +185,6 @@ void main() {
     expect(find.textContaining('Sai Earthmovers'), findsOneWidget);
     expect(find.textContaining('new@saiearth.in'), findsOneWidget);
     expect(h.auth.lastSignUp?.email, 'new@saiearth.in');
-    expect(h.auth.lastSignUp?.password, 'secret123');
     expect(h.auth.lastSignUp?.profile.invoicePrefix, 'SAI');
     // Sign-up does not sign in.
     expect(h.auth.currentUid, isNull);
@@ -137,14 +198,14 @@ void main() {
     tester,
   ) async {
     final h = TestHarness();
-    h.auth.takenEmails.add('owner@jcbworks.in');
+    h.auth.takenEmails.add(ownerEmail);
     await pumpApp(tester, harness: h);
     await tapAndSettle(tester, find.byKey(const Key('login_sign_up')));
     await fillSignUp(tester, email: 'Owner@jcbworks.in');
     await tapAndSettle(tester, find.byKey(const Key('company_submit')));
     expect(
       find.text(
-        'An account with this email already exists. Sign in, or reset your password.',
+        'An account with this email already exists. Sign in with your email and activation code.',
       ),
       findsOneWidget,
     );
@@ -152,11 +213,11 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('new user registers a company and waits for approval', (
+  testWidgets('a signed-in user without a company registers one', (
     tester,
   ) async {
-    final h = await pumpApp(tester);
-    await signIn(tester);
+    final h = TestHarness.signedIn();
+    await pumpApp(tester, harness: h);
     expect(find.text('Set up your company'), findsOneWidget);
 
     // Validation first.
@@ -184,7 +245,7 @@ void main() {
 
     expect(find.text('Awaiting approval'), findsOneWidget);
     expect(find.text('Sai Earthmovers'), findsOneWidget);
-    final uid = FakeAuthRepository.userFor('owner@jcbworks.in').uid;
+    final uid = FakeAuthRepository.userFor(ownerEmail).uid;
     final registered = h.remote.memberships[uid]!.single;
     expect(registered.company.profile.invoicePrefix, 'SAI');
 

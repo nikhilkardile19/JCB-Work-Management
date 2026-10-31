@@ -55,7 +55,12 @@ async function markExpired(ctx: AppContext, licenseId: string, now: Date) {
   await ctx.db.license.updateMany({ where: { id: licenseId, status: 'active', validUntil: { lt: now } }, data: { status: 'expired' } })
 }
 
-async function activate(
+/**
+ * Registers [d.deviceId] on the company license matching the code. Denials
+ * are `409 failed_precondition` with a `reason`. Also used by sign-in with an
+ * activation code.
+ */
+export async function activateDevice(
   ctx: AppContext,
   uid: string,
   companyId: string,
@@ -185,7 +190,7 @@ export function registerDeviceRoutes(api: Api) {
       response: LicenseStateOut,
       errors: [403, 409, 429],
     },
-    ({ params, body, user }) => activate(ctx, user.id, params.companyId, body),
+    ({ params, body, user }) => activateDevice(ctx, user.id, params.companyId, body),
   )
 
   api.route(

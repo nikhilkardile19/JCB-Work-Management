@@ -81,68 +81,6 @@ class StatusChip extends StatelessWidget {
   }
 }
 
-/// Dashboard KPI tile.
-class MetricTile extends StatelessWidget {
-  const MetricTile({
-    super.key,
-    required this.label,
-    required this.value,
-    required this.icon,
-    this.caption,
-    this.onTap,
-  });
-
-  final String label;
-  final String value;
-  final IconData icon;
-  final String? caption;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return AppCard(
-      onTap: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(AppSpace.sm),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.primary.withValues(alpha: .18),
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                ),
-                child: Icon(icon, size: AppSize.iconSm + 2),
-              ),
-              const Spacer(),
-            ],
-          ),
-          const SizedBox(height: AppSpace.md),
-          Text(
-            value,
-            style: theme.textTheme.headlineSmall,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: AppSpace.xxs),
-          Text(
-            label,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          if (caption != null) ...[
-            const SizedBox(height: AppSpace.xs),
-            Text(caption!, style: theme.textTheme.bodySmall),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
 class SectionHeader extends StatelessWidget {
   const SectionHeader(this.title, {super.key, this.trailing});
 

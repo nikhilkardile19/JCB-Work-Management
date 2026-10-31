@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/routes.dart';
-import '../../../core/config/app_config.dart';
 import '../../../core/connectivity/connectivity_provider.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/widgets/app_button.dart';
@@ -11,7 +10,10 @@ import '../../../core/widgets/app_text_field.dart';
 import '../../splash/brand_mark.dart';
 import '../application/auth_providers.dart';
 import '../data/auth_repository.dart';
+import 'auth_inline_error.dart';
 
+/// Sign-in step 1: the email address. Once the server accepts it, the
+/// activation code screen asks for the code (there are no passwords).
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -22,16 +24,12 @@ class LoginScreen extends ConsumerStatefulWidget {
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _email = TextEditingController();
-  final _password = TextEditingController();
-  final _passwordFocus = FocusNode();
   bool _submitting = false;
   String? _error;
 
   @override
   void dispose() {
     _email.dispose();
-    _password.dispose();
-    _passwordFocus.dispose();
     super.dispose();
   }
 
@@ -40,15 +38,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() => _error = null);
     if (!_formKey.currentState!.validate()) return;
     setState(() => _submitting = true);
+    final email = _email.text.trim();
     try {
-      await ref
-          .read(authRepositoryProvider)
-          .signIn(email: _email.text, password: _password.text);
-      // The router redirects to the dashboard on auth state change.
+      await ref.read(authRepositoryProvider).checkEmail(email);
+      if (mounted) context.go(Routes.loginCodeFor(email));
     } on AuthException catch (e) {
       setState(() => _error = e.message);
     } catch (_) {
-      setState(() => _error = 'Sign-in failed. Please try again.');
+      setState(() => _error = 'Something went wrong. Please try again.');
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -81,7 +78,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       Text('Welcome back', style: theme.textTheme.displaySmall),
                       const SizedBox(height: AppSpace.sm),
                       Text(
-                        'Sign in to log machine hours, fuel and invoices.',
+                        'Enter the email address registered with JCB Works. '
+                        "Next, you'll enter your activation code.",
                         style: theme.textTheme.bodyLarge?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -93,50 +91,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         controller: _email,
                         prefixIcon: Icons.alternate_email,
                         keyboardType: TextInputType.emailAddress,
-                        textInputAction: TextInputAction.next,
+                        textInputAction: TextInputAction.done,
                         autofillHints: const [AutofillHints.email],
                         validator: AuthValidators.email,
-                        onFieldSubmitted: (_) => _passwordFocus.requestFocus(),
-                      ),
-                      const SizedBox(height: AppSpace.lg),
-                      AppTextField(
-                        key: const Key('login_password'),
-                        label: 'Password',
-                        controller: _password,
-                        focusNode: _passwordFocus,
-                        prefixIcon: Icons.lock_outline,
-                        obscure: true,
-                        textInputAction: TextInputAction.done,
-                        autofillHints: const [AutofillHints.password],
-                        validator: (v) => AuthValidators.password(
-                          v,
-                          minLength: AppConfig.minPasswordLength,
-                        ),
                         onFieldSubmitted: (_) => _submit(),
                       ),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          key: const Key('login_forgot'),
-                          onPressed: () => context.go(Routes.forgotPassword),
-                          child: const Text('Forgot password?'),
-                        ),
-                      ),
-                      AnimatedSwitcher(
-                        duration: AppMotion.of(context, AppMotion.fast),
-                        child: _error == null
-                            ? const SizedBox(height: AppSpace.xl)
-                            : Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: AppSpace.lg,
-                                ),
-                                child: _InlineError(_error!),
-                              ),
-                      ),
+                      AuthErrorSlot(_error),
                       AppButton(
                         key: const Key('login_submit'),
-                        label: 'Sign in',
-                        icon: Icons.login,
+                        label: 'Continue',
+                        icon: Icons.arrow_forward,
                         loading: _submitting,
                         onPressed: _submit,
                       ),
@@ -170,39 +134,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _InlineError extends StatelessWidget {
-  const _InlineError(this.message);
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Semantics(
-      liveRegion: true,
-      child: Container(
-        padding: const EdgeInsets.all(AppSpace.md),
-        decoration: BoxDecoration(
-          color: scheme.errorContainer,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.error_outline, color: scheme.onErrorContainer),
-            const SizedBox(width: AppSpace.md),
-            Expanded(
-              child: Text(
-                message,
-                style: TextStyle(color: scheme.onErrorContainer),
-              ),
-            ),
-          ],
         ),
       ),
     );

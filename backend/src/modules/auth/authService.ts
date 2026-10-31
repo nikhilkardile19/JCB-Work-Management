@@ -5,11 +5,16 @@ import { ApiError, denied, invalid, unauthenticated } from '../../lib/errors.js'
 import { newId, randomToken, sha256 } from '../../lib/ids.js'
 import { recordEvent } from '../audit/auditEvents.js'
 import type { CompanyProfile } from '../companies/companyProfile.js'
+import { hashCode } from '../licenses/activationCodes.js'
+import { activateDevice } from '../licenses/deviceRoutes.js'
+import type { LicenseState } from '../licenses/licenseRules.js'
 import { assertWithinLimit, consume, LIMITS, tryConsume } from '../rate-limits/rateLimit.js'
 import { burnVerifyTime, hashPassword, needsRehash, verifyPassword } from './passwords.js'
 import { endAllSessions, startSession, type ClientMeta, type Session } from './sessions.js'
 
 const wrongCredentials = () => unauthenticated('Incorrect email or password.', 'invalid_credentials')
+const userDisabled = () => denied('This account has been disabled. Contact your administrator.', 'user_disabled')
+const wrongCode = () => unauthenticated('That activation code is not valid for this email address.', 'invalid_code')
 
 export async function login(
   ctx: AppContext,
@@ -29,27 +34,98 @@ export async function login(
     await tryConsume(ctx.db, ipKey, LIMITS.loginFailuresPerIp, now)
     throw wrongCredentials()
   }
-  if (user.status !== 'active') {
-    throw denied('This account has been disabled. Contact your administrator.', 'user_disabled')
-  }
+  if (user.status !== 'active') throw userDisabled()
   const passwordHash = needsRehash(user.passwordHash!) ? await hashPassword(input.password) : undefined
   await ctx.db.user.update({ where: { id: user.id }, data: { lastLoginAt: now, ...(passwordHash ? { passwordHash } : {}) } })
   return startSession(ctx, user, input.client, meta)
 }
 
+/**
+ * Mobile sign-in, step 1: whether [email] has an account that may sign in.
+ * Sign-up already tells whether an email is registered, so this adds no new
+ * disclosure; it is limited per client all the same.
+ */
+export async function checkEmail(ctx: AppContext, email: string, ip = 'unknown') {
+  await consume(ctx.db, `email-check:ip:${ip}`, LIMITS.emailChecksPerIp, ctx.clock())
+  const user = await ctx.db.user.findUnique({ where: { email }, select: { status: true } })
+  if (!user) {
+    throw new ApiError('not_found', 'No JCB Works account uses this email. Check it, or create an account.', {
+      reason: 'no_account',
+    })
+  }
+  if (user.status !== 'active') throw userDisabled()
+}
+
+/** Activation was refused, but the session started (see [loginWithCode]). */
+type ActivationRefusal = { reason: 'device_limit'; message: string }
+
+/**
+ * Mobile sign-in, step 2: email and activation code, no password. The code
+ * must belong to a license of a company the user is an active member of; this
+ * phone is activated on it and a mobile session starts.
+ *
+ * Codes work once, so after the first activation only the same user on the
+ * same phone can sign in with that code again. When only the device limit
+ * stands in the way, the session still starts (the code proved access) and
+ * `activation` says why, so the app can offer a device replacement. Any other
+ * refusal (code used, license expired, …) is an error and starts nothing.
+ */
+export async function loginWithCode(
+  ctx: AppContext,
+  input: { email: string; activationCode: string; deviceId: string; deviceModel?: string; platform?: string },
+  meta: ClientMeta,
+): Promise<Session & { companyId: string; license: LicenseState | null; activation: ActivationRefusal | null }> {
+  const now = ctx.clock()
+  const emailKey = `login:email:${input.email}`
+  const ipKey = `login:ip:${meta.ip ?? 'unknown'}`
+  await assertWithinLimit(ctx.db, emailKey, LIMITS.loginFailuresPerEmail, now)
+  await assertWithinLimit(ctx.db, ipKey, LIMITS.loginFailuresPerIp, now)
+
+  const user = await ctx.db.user.findUnique({ where: { email: input.email } })
+  const match =
+    user &&
+    (await ctx.db.license.findFirst({
+      where: {
+        activationCodeHash: hashCode(input.activationCode),
+        company: { members: { some: { userId: user.id, status: 'active' } } },
+      },
+      select: { companyId: true },
+    }))
+  if (!user || !match) {
+    await tryConsume(ctx.db, emailKey, LIMITS.loginFailuresPerEmail, now)
+    await tryConsume(ctx.db, ipKey, LIMITS.loginFailuresPerIp, now)
+    throw wrongCode()
+  }
+  if (user.status !== 'active') throw userDisabled()
+
+  let license: LicenseState | null = null
+  let activation: ActivationRefusal | null = null
+  try {
+    license = await activateDevice(ctx, user.id, match.companyId, input)
+  } catch (e) {
+    if (!(e instanceof ApiError && e.extra.reason === 'device_limit')) throw e
+    activation = { reason: 'device_limit', message: e.message }
+  }
+  await ctx.db.user.update({ where: { id: user.id }, data: { lastLoginAt: now } })
+  const session = await startSession(ctx, user, 'mobile', meta)
+  return { ...session, companyId: match.companyId, license, activation }
+}
+
 const emailTaken = () =>
-  new ApiError('already_exists', 'An account with this email already exists. Sign in, or reset your password.', {
+  new ApiError('already_exists', 'An account with this email already exists. Sign in with your email and activation code.', {
     reason: 'email_taken',
   })
 
 /**
  * Mobile sign-up: the account and its company (pending, with the new user as
  * owner) are created together. It does not sign in; once a developer admin
- * approves the company, the activation code is emailed to the owner.
+ * approves the company, the activation code is emailed to the owner, who then
+ * signs in with email and code. The password is optional (older app builds
+ * still send one).
  */
 export async function signUp(
   ctx: AppContext,
-  input: { email: string; password: string; company: CompanyProfile },
+  input: { email: string; password?: string; company: CompanyProfile },
   meta: ClientMeta,
 ) {
   const now = ctx.clock()
@@ -57,12 +133,14 @@ export async function signUp(
   await consume(ctx.db, `signup:ip:${meta.ip ?? 'unknown'}`, LIMITS.signupsPerIp, now)
   if (await ctx.db.user.findUnique({ where: { email: input.email }, select: { id: true } })) throw emailTaken()
 
-  const passwordHash = await hashPassword(input.password)
+  const passwordHash = input.password ? await hashPassword(input.password) : null
   const userId = newId()
   const companyId = newId()
   try {
     await ctx.db.$transaction(async (tx) => {
-      await tx.user.create({ data: { id: userId, email: input.email, passwordHash, passwordChangedAt: now, createdAt: now } })
+      await tx.user.create({
+        data: { id: userId, email: input.email, passwordHash, passwordChangedAt: passwordHash ? now : null, createdAt: now },
+      })
       await tx.company.create({
         data: { id: companyId, ...input.company, currency: 'INR', status: 'pending', ownerUserId: userId, createdBy: userId, updatedBy: userId, createdAt: now, updatedAt: now },
       })

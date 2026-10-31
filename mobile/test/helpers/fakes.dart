@@ -12,9 +12,8 @@ import 'package:jcb_work_management/features/users/data/company_users_service.da
 import 'package:jcb_work_management/features/work/data/evidence_services.dart';
 import 'package:jcb_work_management/features/work/domain/work_log.dart';
 
-const wrongPassword = 'wrong-pass';
-
-/// In-memory auth. Any password except [wrongPassword] signs in.
+/// In-memory auth. Any email not in [unknownEmails] has an account, and
+/// [validActivationCode] signs it in to company [codeCompanyId].
 class FakeAuthRepository implements AuthRepository {
   FakeAuthRepository({AppUser? signedIn}) : _user = signedIn;
 
@@ -22,14 +21,30 @@ class FakeAuthRepository implements AuthRepository {
   final _changes = StreamController<AppUser?>.broadcast();
 
   String? get currentUid => _user?.uid;
-  String? lastResetEmail;
+
+  /// Emails [checkEmail] and [signInWithCode] don't know.
+  final unknownEmails = <String>{};
+
+  /// The company [validActivationCode] belongs to.
+  String codeCompanyId = 'a';
+
+  /// When set, sign-in succeeds but the phone isn't activated (e.g.
+  /// `device_limit`).
+  String? refusalReason;
+
+  ({String email, String code, String deviceId})? lastCodeSignIn;
 
   /// Emails [signUp] refuses as already registered.
   final takenEmails = <String>{};
-  ({String email, String password, CompanyProfile profile})? lastSignUp;
+  ({String email, CompanyProfile profile})? lastSignUp;
 
   static AppUser userFor(String email) =>
       AppUser(uid: 'uid-$email', email: email);
+
+  static const noAccount = AuthException(
+    'No JCB Works account uses this email. Check it, or create an account.',
+    reason: 'no_account',
+  );
 
   @override
   Stream<AppUser?> authStateChanges() async* {
@@ -38,36 +53,65 @@ class FakeAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<AppUser> signIn({
+  Future<void> checkEmail(String email) async {
+    if (unknownEmails.contains(email.trim().toLowerCase())) throw noAccount;
+  }
+
+  @override
+  Future<AppUser> signInWithCode({
     required String email,
-    required String password,
+    required String activationCode,
+    required String deviceId,
+    required String deviceModel,
+    Future<void> Function(CodeSignIn result)? prepare,
   }) async {
-    if (password == wrongPassword) {
-      throw const AuthException('Incorrect email or password.');
+    final key = email.trim().toLowerCase();
+    if (unknownEmails.contains(key) ||
+        activationCode.trim().toUpperCase() != validActivationCode) {
+      throw const AuthException(
+        'That activation code is not valid for this email address.',
+        reason: 'invalid_code',
+      );
     }
-    _user = userFor(email.trim().toLowerCase());
+    lastCodeSignIn = (email: key, code: activationCode, deviceId: deviceId);
+    final user = userFor(key);
+    final validUntil = DateTime.now().add(const Duration(days: 365));
+    await prepare?.call(
+      CodeSignIn(
+        user: user,
+        companyId: codeCompanyId,
+        license: refusalReason != null
+            ? null
+            : {
+                'licenseId': 'lic-$codeCompanyId',
+                'licenseStatus': 'active',
+                'deviceStatus': 'active',
+                'validUntil': validUntil.millisecondsSinceEpoch,
+                'maxDevices': 3,
+                'serverTime': DateTime.now().millisecondsSinceEpoch,
+              },
+        refusalReason: refusalReason,
+        refusalMessage: refusalReason == null ? null : 'All devices allowed by this license are in use. Request a device replacement or contact support.',
+      ),
+    );
+    _user = user;
     _changes.add(_user);
-    return _user!;
+    return user;
   }
 
   @override
   Future<void> signUp({
     required String email,
-    required String password,
     required CompanyProfile profile,
   }) async {
     final key = email.trim().toLowerCase();
     if (takenEmails.contains(key)) {
       throw const AuthException(
-        'An account with this email already exists. Sign in, or reset your password.',
+        'An account with this email already exists. Sign in with your email and activation code.',
+        reason: 'email_taken',
       );
     }
-    lastSignUp = (email: key, password: password, profile: profile);
-  }
-
-  @override
-  Future<void> sendPasswordReset(String email) async {
-    lastResetEmail = email.trim();
+    lastSignUp = (email: key, profile: profile);
   }
 
   @override
@@ -77,7 +121,6 @@ class FakeAuthRepository implements AuthRepository {
   }
 }
 
-/// In-memory stand-in for the company API. Set [offline] to make calls fail.
 class FakeCompanyRemote implements CompanyRemoteSource {
   final memberships = <String, List<CompanyMembership>>{};
   bool offline = false;

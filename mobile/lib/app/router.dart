@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/config/app_config.dart';
-import '../features/auth/presentation/forgot_password_screen.dart';
+import '../features/auth/presentation/code_sign_in_screen.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/auth/presentation/sign_up_screen.dart';
 import '../features/billing/presentation/billing_screen.dart';
@@ -49,7 +49,7 @@ import '../features/work/presentation/work_logs_screen.dart';
 import 'routes.dart';
 
 /// Screens reachable without signing in.
-const _signedOutRoutes = {Routes.login, Routes.forgotPassword, Routes.signUp};
+const _signedOutRoutes = {Routes.login, Routes.loginCode, Routes.signUp};
 
 /// Pure redirect decision so the guard can be unit-tested. [license] is
 /// null while the cached license state is loading.
@@ -106,8 +106,14 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, _) => const LoginScreen(),
         routes: [
           GoRoute(
-            path: 'forgot',
-            builder: (_, _) => const ForgotPasswordScreen(),
+            path: 'code',
+            // Without an email (e.g. a stale deep link) start over.
+            redirect: (_, state) =>
+                (state.uri.queryParameters['email'] ?? '').trim().isEmpty
+                ? Routes.login
+                : null,
+            builder: (_, state) =>
+                CodeSignInScreen(email: state.uri.queryParameters['email']!),
           ),
           GoRoute(path: 'signup', builder: (_, _) => const SignUpScreen()),
         ],

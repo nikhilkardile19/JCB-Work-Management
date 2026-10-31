@@ -17,12 +17,23 @@ void main() {
     });
   });
 
-  group('AuthValidators.password', () {
-    test('enforces minimum length', () {
-      expect(AuthValidators.password(''), 'Enter your password');
-      expect(AuthValidators.password('12345'), contains('at least 6'));
-      expect(AuthValidators.password('123456'), isNull);
-      expect(AuthValidators.password('1234567', minLength: 8), isNotNull);
+  group('AuthValidators.activationCode', () {
+    test('rejects empty and incomplete codes', () {
+      expect(AuthValidators.activationCode(''), 'Enter your activation code');
+      expect(
+        AuthValidators.activationCode('JCBW-7KQ2-M9XD'),
+        contains('full code'),
+      );
+      expect(
+        AuthValidators.activationCode('7KQ2M9XDPA4HX'),
+        contains('full code'),
+      );
+    });
+
+    test('accepts any case, spacing and with or without the prefix', () {
+      expect(AuthValidators.activationCode('JCBW-7KQ2-M9XD-PA4H'), isNull);
+      expect(AuthValidators.activationCode(' jcbw 7kq2 m9xd pa4h '), isNull);
+      expect(AuthValidators.activationCode('7KQ2-M9XD-PA4H'), isNull);
     });
   });
 }

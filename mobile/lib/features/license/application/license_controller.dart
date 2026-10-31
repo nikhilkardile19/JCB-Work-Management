@@ -30,7 +30,10 @@ final clockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
 class LicenseController extends AsyncNotifier<LicenseSnapshot?> {
   Timer? _timer;
 
-  String _key(String companyId, String userId) => 'license:$companyId:$userId';
+  /// Where the snapshot for [userId] in [companyId] is cached. Sign-in with
+  /// an activation code writes it before the session starts.
+  static String cacheKey(String companyId, String userId) =>
+      'license:$companyId:$userId';
 
   @override
   Future<LicenseSnapshot?> build() async {
@@ -39,7 +42,7 @@ class LicenseController extends AsyncNotifier<LicenseSnapshot?> {
     if (actor == null) return null;
     final db = ref.watch(appDatabaseProvider);
     final cached = LicenseSnapshot.fromJson(
-      await db.readSetting(_key(actor.companyId, actor.userId)),
+      await db.readSetting(cacheKey(actor.companyId, actor.userId)),
     );
     if (ref.watch(autoLicenseCheckProvider)) {
       ref.listen(isOnlineProvider, (prev, next) {
@@ -60,7 +63,7 @@ class LicenseController extends AsyncNotifier<LicenseSnapshot?> {
     final actor = ref.read(workActorProvider)!;
     await ref
         .read(appDatabaseProvider)
-        .writeSetting(_key(actor.companyId, actor.userId), s.toJson());
+        .writeSetting(cacheKey(actor.companyId, actor.userId), s.toJson());
     state = AsyncData(s);
   }
 
@@ -74,7 +77,7 @@ class LicenseController extends AsyncNotifier<LicenseSnapshot?> {
           companyId: actor.companyId,
           activationCode: code.trim(),
           deviceId: await ref.read(appDatabaseProvider).installationId(),
-          deviceModel: _deviceModel(),
+          deviceModel: deviceModel(),
         );
     await _save(
       LicenseSnapshot.fromServer(result, checkedAt: ref.read(clockProvider)()),
@@ -123,7 +126,7 @@ class LicenseController extends AsyncNotifier<LicenseSnapshot?> {
           companyId: actor.companyId,
           activationCode: activationCode.trim(),
           newDeviceId: await db.installationId(),
-          newDeviceModel: _deviceModel(),
+          newDeviceModel: deviceModel(),
           reason: reason.trim(),
         );
     if (r.status == ReplacementStatus.alreadyActive) {
@@ -167,11 +170,39 @@ class LicenseController extends AsyncNotifier<LicenseSnapshot?> {
     }
   }
 
-  static String _deviceModel() {
+  /// Sent with activations so support can tell phones apart.
+  static String deviceModel() {
     final s = '${Platform.operatingSystem} ${Platform.operatingSystemVersion}';
     return s.length > 100 ? s.substring(0, 100) : s;
   }
 }
+
+/// A sign-in whose phone activation the server refused because every device
+/// on the license is in use. The activation screen shows it (code filled in,
+/// replacement offered) instead of asking for the code again.
+class PendingActivation {
+  const PendingActivation({
+    required this.code,
+    required this.reason,
+    required this.message,
+  });
+
+  final String code;
+  final String reason;
+  final String message;
+}
+
+class PendingActivationNotifier extends Notifier<PendingActivation?> {
+  @override
+  PendingActivation? build() => null;
+
+  void set(PendingActivation? value) => state = value;
+}
+
+final pendingActivationProvider =
+    NotifierProvider<PendingActivationNotifier, PendingActivation?>(
+      PendingActivationNotifier.new,
+    );
 
 final licenseControllerProvider =
     AsyncNotifierProvider<LicenseController, LicenseSnapshot?>(

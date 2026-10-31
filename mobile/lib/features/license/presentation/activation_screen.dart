@@ -32,6 +32,22 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
   bool _full = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Signed in with a code the server could not activate (all devices in
+    // use): show why and offer the replacement, without asking again.
+    final pending = ref.read(pendingActivationProvider);
+    if (pending != null) {
+      _code.text = pending.code;
+      _error = pending.message;
+      _full = pending.reason == 'device_limit';
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ref.read(pendingActivationProvider.notifier).set(null);
+      });
+    }
+  }
+
+  @override
   void dispose() {
     _code.dispose();
     super.dispose();

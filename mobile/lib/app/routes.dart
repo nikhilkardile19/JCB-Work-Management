@@ -4,7 +4,11 @@ import '../features/reports/domain/reports.dart';
 abstract final class Routes {
   static const splash = '/splash';
   static const login = '/login';
-  static const forgotPassword = '/login/forgot';
+
+  /// Sign-in step 2 (activation code); the email rides in the query.
+  static const loginCode = '/login/code';
+  static String loginCodeFor(String email) =>
+      '$loginCode?email=${Uri.encodeQueryComponent(email)}';
   static const signUp = '/login/signup';
   static const companySetup = '/setup/company';
   static const selectCompany = '/setup/select-company';
@@ -51,7 +55,7 @@ abstract final class Routes {
   static const gate = {
     splash,
     login,
-    forgotPassword,
+    loginCode,
     signUp,
     companySetup,
     selectCompany,

@@ -31,6 +31,14 @@ void main() {
         setView(tester);
         await pumpApp(tester);
         expect(tester.takeException(), isNull, reason: 'login');
+        await tester.enterText(
+          find.byKey(const Key('login_email')),
+          'owner@jcbworks.in',
+        );
+        await tapAndSettle(tester, find.byKey(const Key('login_submit')));
+        await scrollTo(tester, find.byKey(const Key('code_submit')));
+        expect(tester.takeException(), isNull, reason: 'activation code');
+        await tapAndSettle(tester, find.byKey(const Key('code_change_email')));
         await tapAndSettle(tester, find.byKey(const Key('login_sign_up')));
         await scrollTo(tester, find.byKey(const Key('signup_email')));
         await scrollTo(tester, find.byKey(const Key('company_submit')));

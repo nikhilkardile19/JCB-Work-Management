@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { createUser, DAY, PASSWORD } from './helpers/factories.js'
+import { hashCode } from '../src/modules/licenses/activationCodes.js'
+import { freshCode } from '../src/modules/licenses/licenseRules.js'
+import { createUser, DAY, PASSWORD, seedCompany } from './helpers/factories.js'
 import { useTestApp } from './helpers/testApp.js'
 
 const env = useTestApp()
@@ -93,6 +95,16 @@ describe('sign-up', () => {
     expect(await env.db.company.count()).toBe(1)
   })
 
+  it('needs no password: the owner signs in later with the activation code', async () => {
+    const { password: _, ...withoutPassword } = { email: 'new@sai.example', password: '', company: COMPANY }
+    const res = await env.request.post('/api/v1/auth/signup').send(withoutPassword)
+    expect(res.status).toBe(201)
+    expect(await env.db.user.findUniqueOrThrow({ where: { id: res.body.userId } })).toMatchObject({
+      passwordHash: null,
+      passwordChangedAt: null,
+    })
+  })
+
   it('validates the account and company details', async () => {
     const res = await signUp({ email: 'nope', password: 'short', company: { ...COMPANY, phone: '12', invoicePrefix: 'bad prefix' } })
     expect(res.status).toBe(400)
@@ -106,6 +118,127 @@ describe('sign-up', () => {
     const res = await signUp({ email: 'new@example.test' })
     expect(res.status).toBe(429)
     expect(res.body.error.reason).toBe('rate_limited')
+  })
+})
+
+describe('mobile sign-in with an activation code', () => {
+  const CODE = 'JCBW-AAAA-BBBB-CCCC'
+  const check = (email: string) => env.request.post('/api/v1/auth/check-email').send({ email })
+  const codeLogin = (email: string, activationCode = CODE, deviceId = 'phone-1') =>
+    env.request.post('/api/v1/auth/login-with-code').send({ email, activationCode, deviceId, deviceModel: 'Pixel 8' })
+  const sessions = () => env.db.refreshToken.count()
+  const seed = (o: Parameters<typeof seedCompany>[1] = {}) =>
+    seedCompany(env.db, { members: { owner: 'owner', op: 'operator' }, devices: false, maxDevices: 2, activationCode: CODE, ...o })
+
+  describe('check-email', () => {
+    it('accepts an email with an account, in any case', async () => {
+      await createUser(env.db, 'u1', { password: false })
+      const res = await check('U1@Example.test')
+      expect(res.status).toBe(204)
+    })
+
+    it('says when there is no account, or it is disabled', async () => {
+      const none = await check('nobody@example.test')
+      expect(none.status).toBe(404)
+      expect(none.body.error).toMatchObject({ code: 'not_found', reason: 'no_account' })
+      await createUser(env.db, 'u1', { disabled: true })
+      const off = await check('u1@example.test')
+      expect(off.status).toBe(403)
+      expect(off.body.error.reason).toBe('user_disabled')
+    })
+
+    it('is limited per client', async () => {
+      for (let i = 0; i < 30; i++) expect((await check('nobody@example.test')).status).toBe(404)
+      expect((await check('nobody@example.test')).status).toBe(429)
+    })
+  })
+
+  describe('login-with-code', () => {
+    it('signs in without a password, activates the phone and names the company', async () => {
+      await seed()
+      await env.db.user.update({ where: { id: 'owner' }, data: { passwordHash: null } })
+      const res = await codeLogin('Owner@example.test', 'jcbw aaaa bbbb cccc')
+      expect(res.status).toBe(200)
+      expect(res.body).toMatchObject({
+        user: { id: 'owner', email: 'owner@example.test' },
+        refreshTokenExpiresAt: null,
+        companyId: 'co',
+        license: { licenseId: 'lic-co', licenseStatus: 'active', deviceStatus: 'active', maxDevices: 2 },
+        activation: null,
+      })
+      expect(res.body.accessToken).toMatch(/^ey/)
+      expect(await env.db.device.findUniqueOrThrow({ where: { companyId_id: { companyId: 'co', id: 'phone-1' } } })).toMatchObject({
+        userId: 'owner',
+        status: 'active',
+      })
+      expect(await env.db.license.findUniqueOrThrow({ where: { id: 'lic-co' } })).toMatchObject({
+        activationCodeUsedBy: 'owner',
+        activationCodeDeviceId: 'phone-1',
+      })
+      const me = await env.request.get('/api/v1/auth/me').set('Authorization', `Bearer ${res.body.accessToken}`)
+      expect(me.body.id).toBe('owner')
+    })
+
+    it('a used code signs in again only for the same user on the same phone', async () => {
+      await seed()
+      expect((await codeLogin('owner@example.test')).status).toBe(200)
+      // Signed out and back in on the same phone.
+      expect((await codeLogin('owner@example.test')).status).toBe(200)
+      const before = await sessions()
+      for (const [email, phone] of [['owner@example.test', 'phone-2'], ['op@example.test', 'phone-1']]) {
+        const res = await codeLogin(email, CODE, phone)
+        expect(res.status).toBe(409)
+        expect(res.body.error).toMatchObject({ code: 'failed_precondition', reason: 'code_used' })
+      }
+      expect(await sessions()).toBe(before)
+    })
+
+    it('gives one answer for a wrong code, an unknown email, or another company’s code', async () => {
+      await seed()
+      await seedCompany(env.db, { id: 'other', members: { stranger: 'owner' }, devices: false, activationCode: 'JCBW-ZZZZ-YYYY-XXXX' })
+      const wrong = await codeLogin('owner@example.test', 'JCBW-WRNG-WRNG-WRNG')
+      const unknown = await codeLogin('nobody@example.test')
+      const foreign = await codeLogin('owner@example.test', 'JCBW-ZZZZ-YYYY-XXXX')
+      for (const res of [wrong, unknown, foreign]) {
+        expect(res.status).toBe(401)
+        expect(res.body).toEqual(wrong.body)
+      }
+      expect(wrong.body.error).toMatchObject({ code: 'unauthenticated', reason: 'invalid_code' })
+      expect(await sessions()).toBe(0)
+      expect(await env.db.device.count()).toBe(0)
+    })
+
+    it('locks an email after 10 wrong codes', async () => {
+      await seed()
+      for (let i = 0; i < 10; i++) expect((await codeLogin('owner@example.test', 'JCBW-WRNG-WRNG-WRNG')).status).toBe(401)
+      const res = await codeLogin('owner@example.test')
+      expect(res.status).toBe(429)
+      expect(res.body.error.reason).toBe('rate_limited')
+    })
+
+    it('refuses disabled accounts and inactive licenses without starting a session', async () => {
+      await seed({ licenseStatus: 'suspended' })
+      const suspended = await codeLogin('owner@example.test')
+      expect(suspended.status).toBe(409)
+      expect(suspended.body.error.reason).toBe('suspended')
+      await env.db.user.update({ where: { id: 'owner' }, data: { status: 'disabled' } })
+      const disabled = await codeLogin('owner@example.test')
+      expect(disabled.status).toBe(403)
+      expect(disabled.body.error.reason).toBe('user_disabled')
+      expect(await sessions()).toBe(0)
+    })
+
+    it('signs in when all devices are in use, so the phone can ask for a replacement', async () => {
+      await seed({ maxDevices: 1 })
+      expect((await codeLogin('op@example.test', CODE, 'phone-op')).status).toBe(200)
+      await env.db.license.update({ where: { id: 'lic-co' }, data: freshCode(hashCode(CODE)) })
+      const res = await codeLogin('owner@example.test')
+      expect(res.status).toBe(200)
+      expect(res.body).toMatchObject({ companyId: 'co', license: null, activation: { reason: 'device_limit' } })
+      expect(res.body.refreshToken).toBeDefined()
+      // The code is still unused, for the replacement request.
+      expect((await env.db.license.findUniqueOrThrow({ where: { id: 'lic-co' } })).activationCodeUsedAt).toBeNull()
+    })
   })
 })
 

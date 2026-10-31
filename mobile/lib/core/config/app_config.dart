@@ -75,12 +75,4 @@ abstract final class AppConfig {
   /// Work logs longer than this (hundredths of an hour) need confirmation.
   /// PROPOSED — configurable by the product owner (sprint doc §4.8).
   static const highDailyHours = 1200;
-
-  /// Minimum password length accepted by the login form.
-  static const minPasswordLength = 6;
-
-  /// Minimum length of a new password (sign-up). Matches the server's
-  /// `MIN_PASSWORD_LENGTH`; sign-in keeps [minPasswordLength] for older
-  /// accounts.
-  static const minNewPasswordLength = 8;
 }

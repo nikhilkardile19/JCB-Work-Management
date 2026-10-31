@@ -93,9 +93,21 @@ void main() {
 
     expect(
       HttpAuthRepository.messageFor(
-        refused(401, 'unauthenticated', 'invalid_credentials'),
+        refused(401, 'unauthenticated', 'invalid_code'),
       ),
-      'Incorrect email or password.',
+      'That activation code is not valid for this email address.',
+    );
+    expect(
+      HttpAuthRepository.messageFor(refused(404, 'not_found', 'no_account')),
+      contains('No JCB Works account'),
+    );
+    // Activation refusals (code used, license expired, …) keep the
+    // server's wording.
+    expect(
+      HttpAuthRepository.messageFor(
+        refused(409, 'failed_precondition', 'code_used'),
+      ),
+      'server text',
     );
     expect(
       HttpAuthRepository.messageFor(
@@ -103,15 +115,16 @@ void main() {
       ),
       'This account has been disabled. Contact your administrator.',
     );
+    // The server says how long to wait.
     expect(
       HttpAuthRepository.messageFor(
-        const ApiUnavailable('rate limited', statusCode: 429),
+        const ApiUnavailable('Wait an hour.', statusCode: 429),
       ),
-      'Too many attempts. Wait a few minutes and try again.',
+      'Wait an hour.',
     );
     expect(
       HttpAuthRepository.messageFor(const ApiUnavailable('offline')),
-      'No internet connection. Connect and try again.',
+      "Couldn't reach the server. Check your internet connection and try again.",
     );
     expect(
       HttpAuthRepository.messageFor(refused(400, 'invalid_argument')),

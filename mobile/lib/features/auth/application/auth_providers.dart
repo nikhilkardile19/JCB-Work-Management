@@ -28,11 +28,14 @@ abstract final class AuthValidators {
     return null;
   }
 
-  static String? password(String? value, {int minLength = 6}) {
-    final v = value ?? '';
-    if (v.isEmpty) return 'Enter your password';
-    if (v.length < minLength) {
-      return 'Password must be at least $minLength characters';
+  /// Codes look like `JCBW-7KQ2-M9XD-PA4H`; case, spaces, dashes and the
+  /// `JCBW` prefix don't matter (the server normalizes them the same way).
+  static String? activationCode(String? value) {
+    final v = (value ?? '').toUpperCase().replaceAll(RegExp(r'[\s-]'), '');
+    if (v.isEmpty) return 'Enter your activation code';
+    final body = v.startsWith('JCBW') ? v.substring(4) : v;
+    if (body.length != 12) {
+      return 'Enter the full code, e.g. JCBW-7KQ2-M9XD-PA4H';
     }
     return null;
   }

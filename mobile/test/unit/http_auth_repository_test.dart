@@ -35,76 +35,182 @@ void main() {
     expect(await auth.authStateChanges().first, isNull);
   });
 
-  test(
-    'signIn sends client "mobile", stores the session, emits the user',
-    () async {
-      setUpWith((r) => FakeReply(200, sessionJson()));
-      final events = <AppUser?>[];
-      final sub = auth.authStateChanges().listen(events.add);
-      await pumpEventQueue();
+  test('checkEmail posts the trimmed email without a token', () async {
+    setUpWith((r) => const FakeReply(204));
+    await auth.checkEmail(' owner@jcbworks.in ');
+    final request = h.http.requests.single;
+    expect(request.path, '/auth/check-email');
+    expect(request.bearer, isNull);
+    expect(request.json, {'email': 'owner@jcbworks.in'});
+  });
 
-      expect(
-        await auth.signIn(email: ' owner@jcbworks.in ', password: 'secret1'),
-        owner,
-      );
-      await pumpEventQueue();
-
-      expect(h.http.requests.single.path, '/auth/login');
-      expect(h.http.requests.single.json, {
-        'email': 'owner@jcbworks.in',
-        'password': 'secret1',
-        'client': 'mobile',
-      });
-      expect(events, [null, owner]);
-      expect(h.secrets.values['auth_session'], contains('r1'));
-      expect(h.secrets.values['auth_session'], isNot(contains('a1')));
-      await sub.cancel();
-    },
-  );
-
-  test('signIn failures keep the existing messages', () async {
-    Future<String> messageFor(FakeHandler handler) async {
+  test('checkEmail failures carry the reason and a useful message', () async {
+    Future<AuthException> failureFor(FakeHandler handler) async {
       setUpWith(handler);
       try {
-        await auth.signIn(email: 'a@b.co', password: 'x');
+        await auth.checkEmail('a@b.co');
       } on AuthException catch (e) {
-        return e.message;
+        return e;
       }
       fail('expected AuthException');
     }
 
-    expect(
-      await messageFor(
-        (r) => FakeReply.error(
-          401,
-          'unauthenticated',
-          reason: 'invalid_credentials',
-        ),
-      ),
-      'Incorrect email or password.',
+    final none = await failureFor(
+      (r) => FakeReply.error(404, 'not_found', reason: 'no_account'),
     );
+    expect(none.reason, 'no_account');
+    expect(none.message, contains('No JCB Works account'));
     expect(
-      await messageFor(
+      (await failureFor(
         (r) =>
             FakeReply.error(403, 'permission_denied', reason: 'user_disabled'),
-      ),
+      )).message,
       'This account has been disabled. Contact your administrator.',
     );
     expect(
-      await messageFor(
-        (r) =>
-            FakeReply.error(429, 'resource_exhausted', reason: 'rate_limited'),
-      ),
-      'Too many attempts. Wait a few minutes and try again.',
+      (await failureFor((r) => throw const Offline())).message,
+      "Couldn't reach the server. Check your internet connection and try again.",
     );
-    expect(
-      await messageFor((r) => throw const Offline()),
-      'No internet connection. Connect and try again.',
-    );
-    expect(
-      await messageFor((r) => const FakeReply(200, {'unexpected': true})),
-      'Something went wrong. Please try again.',
-    );
+  });
+
+  group('signInWithCode', () {
+    Map<String, Object?> codeLoginJson({
+      Map<String, Object?>? license = const {
+        'licenseId': 'lic1',
+        'licenseStatus': 'active',
+        'deviceStatus': 'active',
+        'validUntil': 9,
+        'maxDevices': 2,
+        'serverTime': 1,
+      },
+      Map<String, Object?>? activation,
+    }) => {
+      ...sessionJson(),
+      'refreshTokenExpiresAt': null,
+      'companyId': 'co1',
+      'license': license,
+      'activation': activation,
+    };
+
+    Future<AppUser> signIn({Future<void> Function(CodeSignIn)? prepare}) =>
+        auth.signInWithCode(
+          email: ' owner@jcbworks.in ',
+          activationCode: ' JCBW-AAAA-BBBB-CCCC ',
+          deviceId: testDeviceId,
+          deviceModel: 'android 14',
+          prepare: prepare,
+        );
+
+    test('sends email, code and device; prepares before signing in', () async {
+      setUpWith((r) => FakeReply(200, codeLoginJson()));
+      final events = <AppUser?>[];
+      final sub = auth.authStateChanges().listen(events.add);
+      await pumpEventQueue();
+
+      CodeSignIn? prepared;
+      List<AppUser?>? eventsWhenPrepared;
+      expect(
+        await signIn(
+          prepare: (r) async {
+            prepared = r;
+            eventsWhenPrepared = List.of(events);
+          },
+        ),
+        owner,
+      );
+      await pumpEventQueue();
+
+      final request = h.http.requests.single;
+      expect(request.path, '/auth/login-with-code');
+      expect(request.bearer, isNull);
+      expect(request.json, {
+        'email': 'owner@jcbworks.in',
+        'activationCode': 'JCBW-AAAA-BBBB-CCCC',
+        'deviceId': testDeviceId,
+        'deviceModel': 'android 14',
+        'platform': 'android',
+      });
+      expect(prepared?.user, owner);
+      expect(prepared?.companyId, 'co1');
+      expect(prepared?.license?['licenseStatus'], 'active');
+      expect(prepared?.refusalReason, isNull);
+      // The user was still signed out while preparing.
+      expect(eventsWhenPrepared, [null]);
+      expect(events, [null, owner]);
+      expect(h.secrets.values['auth_session'], contains('r1'));
+      await sub.cancel();
+    });
+
+    test('passes on a device-limit refusal with the session', () async {
+      setUpWith(
+        (r) => FakeReply(
+          200,
+          codeLoginJson(
+            license: null,
+            activation: {'reason': 'device_limit', 'message': 'All in use.'},
+          ),
+        ),
+      );
+      CodeSignIn? prepared;
+      await signIn(prepare: (r) async => prepared = r);
+      expect(prepared?.license, isNull);
+      expect(prepared?.refusalReason, 'device_limit');
+      expect(prepared?.refusalMessage, 'All in use.');
+      expect(h.session.user, isNotNull);
+    });
+
+    test('failures sign nothing in and explain what happened', () async {
+      Future<String> messageFor(FakeHandler handler) async {
+        setUpWith(handler);
+        try {
+          await signIn(prepare: (_) async => fail('must not prepare'));
+        } on AuthException catch (e) {
+          expect(h.secrets.values, isEmpty);
+          return e.message;
+        }
+        fail('expected AuthException');
+      }
+
+      expect(
+        await messageFor(
+          (r) =>
+              FakeReply.error(401, 'unauthenticated', reason: 'invalid_code'),
+        ),
+        'That activation code is not valid for this email address.',
+      );
+      // Activation refusals use the server's wording.
+      expect(
+        await messageFor(
+          (r) => FakeReply.error(
+            409,
+            'failed_precondition',
+            reason: 'code_used',
+            message: 'This activation code has already been used.',
+          ),
+        ),
+        'This activation code has already been used.',
+      );
+      expect(
+        await messageFor(
+          (r) => FakeReply.error(
+            429,
+            'resource_exhausted',
+            reason: 'rate_limited',
+            message:
+                'Too many wrong activation codes. Wait an hour and try again.',
+          ),
+        ),
+        'Too many wrong activation codes. Wait an hour and try again.',
+      );
+      expect(
+        await messageFor((r) => throw const Offline()),
+        "Couldn't reach the server. Check your internet connection and try again.",
+      );
+      expect(
+        await messageFor((r) => const FakeReply(200, {'unexpected': true})),
+        'Something went wrong. Please try again.',
+      );
+    });
   });
 
   test('mobile sessions without an end date are accepted', () {
@@ -125,11 +231,8 @@ void main() {
       invoicePrefix: 'SAI',
     );
 
-    Future<void> signUp() => auth.signUp(
-      email: ' new@saiearth.in ',
-      password: 'secret123',
-      profile: profile,
-    );
+    Future<void> signUp() =>
+        auth.signUp(email: ' new@saiearth.in ', profile: profile);
 
     test('creates the account and company without signing in', () async {
       setUpWith(
@@ -141,7 +244,6 @@ void main() {
       expect(request.bearer, isNull);
       expect(request.json, {
         'email': 'new@saiearth.in',
-        'password': 'secret123',
         'company': {
           'name': 'Sai Earthmovers',
           'contactPerson': 'Ravi Patil',
@@ -171,7 +273,7 @@ void main() {
         await messageFor(
           (r) => FakeReply.error(409, 'already_exists', reason: 'email_taken'),
         ),
-        'An account with this email already exists. Sign in, or reset your password.',
+        'An account with this email already exists. Sign in with your email and activation code.',
       );
       expect(
         await messageFor((r) => FakeReply.error(400, 'invalid_argument')),
@@ -179,32 +281,10 @@ void main() {
       );
       expect(
         await messageFor((r) => throw const Offline()),
-        'No internet connection. Connect and try again.',
+        "Couldn't reach the server. Check your internet connection and try again.",
       );
     });
   });
-
-  test(
-    'sendPasswordReset posts the email; failures are AuthExceptions',
-    () async {
-      setUpWith((r) => const FakeReply(204));
-      await auth.sendPasswordReset(' owner@jcbworks.in ');
-      expect(h.http.requests.single.path, '/auth/forgot-password');
-      expect(h.http.requests.single.json, {'email': 'owner@jcbworks.in'});
-
-      h.http.offline = true;
-      await expectLater(
-        auth.sendPasswordReset('owner@jcbworks.in'),
-        throwsA(
-          isA<AuthException>().having(
-            (e) => e.message,
-            'message',
-            contains('internet'),
-          ),
-        ),
-      );
-    },
-  );
 
   test(
     'signOut works offline: local state is cleared and null emitted',
