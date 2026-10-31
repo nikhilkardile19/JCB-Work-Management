@@ -109,11 +109,11 @@ model User {
   createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  developerAdmin  DeveloperAdmin?
-  refreshTokens   RefreshToken[]
-  resetTokens     PasswordResetToken[]
-  memberships     CompanyMember[]
-  ownedCompanies  Company[]       @relation("CompanyOwner")
+  developerAdmin DeveloperAdmin?
+  refreshTokens  RefreshToken[]
+  resetTokens    PasswordResetToken[]
+  memberships    CompanyMember[]
+  ownedCompanies Company[]            @relation("CompanyOwner")
 
   @@map("users")
 }
@@ -141,7 +141,9 @@ model RefreshToken {
   /// SHA-256 of the opaque token; the token itself is never stored.
   tokenHash    String        @unique @map("token_hash")
   client       SessionClient
-  expiresAt    DateTime      @map("expires_at") @db.Timestamptz(3)
+  /// Null for mobile sessions: they never expire and end only on sign-out,
+  /// password reset, account disable or reuse detection.
+  expiresAt    DateTime?     @map("expires_at") @db.Timestamptz(3)
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   /// Set when the token was exchanged for its successor.
   rotatedAt    DateTime?     @map("rotated_at") @db.Timestamptz(3)
@@ -192,25 +194,25 @@ model Company {
   createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  owner          User                       @relation("CompanyOwner", fields: [ownerUserId], references: [id])
-  members        CompanyMember[]
-  licenses       License[]
-  devices        Device[]
-  replacements   DeviceReplacementRequest[]
-  syncState      CompanySyncState?
-  counters       InvoiceNumberCounter[]
-  issuedNumbers  IssuedInvoiceNumber[]
-  clients        Client[]
-  sites          Site[]
-  machines       Machine[]
-  operators      Operator[]
-  petrolPumps    PetrolPump[]
-  workLogs       WorkLog[]
-  fuelEntries    FuelEntry[]
-  invoices       Invoice[]
-  invoiceLines   InvoiceLine[]
-  payments       Payment[]
-  auditLogs      AuditLog[]
+  owner         User                       @relation("CompanyOwner", fields: [ownerUserId], references: [id])
+  members       CompanyMember[]
+  licenses      License[]
+  devices       Device[]
+  replacements  DeviceReplacementRequest[]
+  syncState     CompanySyncState?
+  counters      InvoiceNumberCounter[]
+  issuedNumbers IssuedInvoiceNumber[]
+  clients       Client[]
+  sites         Site[]
+  machines      Machine[]
+  operators     Operator[]
+  petrolPumps   PetrolPump[]
+  workLogs      WorkLog[]
+  fuelEntries   FuelEntry[]
+  invoices      Invoice[]
+  invoiceLines  InvoiceLine[]
+  payments      Payment[]
+  auditLogs     AuditLog[]
 
   @@index([status, createdAt])
   @@map("companies")
@@ -237,18 +239,23 @@ model CompanyMember {
 // --- Licensing ------------------------------------------------------------
 
 model License {
-  id                 String        @id
-  companyId          String        @map("company_id")
-  status             LicenseStatus
-  validFrom          DateTime      @map("valid_from") @db.Timestamptz(3)
-  validUntil         DateTime      @map("valid_until") @db.Timestamptz(3)
-  maxDevices         Int           @map("max_devices")
+  id                     String        @id
+  companyId              String        @map("company_id")
+  status                 LicenseStatus
+  validFrom              DateTime      @map("valid_from") @db.Timestamptz(3)
+  validUntil             DateTime      @map("valid_until") @db.Timestamptz(3)
+  maxDevices             Int           @map("max_devices")
   /// SHA-256 of the normalized activation code; the code is shown once.
-  activationCodeHash String        @map("activation_code_hash")
-  lastValidatedAt    DateTime?     @map("last_validated_at") @db.Timestamptz(3)
-  createdBy          String?       @map("created_by")
-  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  activationCodeHash     String        @map("activation_code_hash")
+  /// Codes work once: set by the activation (or replacement request) that
+  /// used the current code; cleared when a new code is issued.
+  activationCodeUsedAt   DateTime?     @map("activation_code_used_at") @db.Timestamptz(3)
+  activationCodeUsedBy   String?       @map("activation_code_used_by")
+  activationCodeDeviceId String?       @map("activation_code_device_id")
+  lastValidatedAt        DateTime?     @map("last_validated_at") @db.Timestamptz(3)
+  createdBy              String?       @map("created_by")
+  createdAt              DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   company      Company                    @relation(fields: [companyId], references: [id])
   devices      Device[]
@@ -718,23 +725,23 @@ model Invoice {
 /// One billed work log with the values used for billing (a snapshot).
 /// Uploaded inside its invoice, as the `lines` array.
 model InvoiceLine {
-  companyId    String  @map("company_id")
+  companyId    String   @map("company_id")
   id           String
-  invoiceId    String  @map("invoice_id")
-  workLogId    String  @map("work_log_id")
+  invoiceId    String   @map("invoice_id")
+  workLogId    String   @map("work_log_id")
   workDate     DateTime @map("work_date") @db.Date
-  siteId       String  @map("site_id")
-  siteName     String  @map("site_name")
-  machineId    String  @map("machine_id")
-  machineName  String  @map("machine_name")
-  startReading Int     @map("start_reading")
-  endReading   Int     @map("end_reading")
-  workingHours Int     @map("working_hours")
+  siteId       String   @map("site_id")
+  siteName     String   @map("site_name")
+  machineId    String   @map("machine_id")
+  machineName  String   @map("machine_name")
+  startReading Int      @map("start_reading")
+  endReading   Int      @map("end_reading")
+  workingHours Int      @map("working_hours")
   /// Rate for this invoice only; never written back to the site.
-  ratePaise    BigInt  @map("rate_paise")
-  amountPaise  BigInt  @map("amount_paise")
+  ratePaise    BigInt   @map("rate_paise")
+  amountPaise  BigInt   @map("amount_paise")
   description  String?
-  sortOrder    Int     @map("sort_order")
+  sortOrder    Int      @map("sort_order")
 
   company Company @relation(fields: [companyId], references: [id])
   invoice Invoice @relation(fields: [companyId, invoiceId], references: [companyId, id], onDelete: Cascade)

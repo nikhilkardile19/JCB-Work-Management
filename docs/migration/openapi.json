@@ -18,47 +18,6 @@
       }
     },
     "schemas": {
-      "Session": {
-        "type": "object",
-        "properties": {
-          "accessToken": {
-            "type": "string"
-          },
-          "accessTokenExpiresAt": {
-            "type": "integer",
-            "description": "Epoch ms"
-          },
-          "refreshToken": {
-            "type": "string"
-          },
-          "refreshTokenExpiresAt": {
-            "type": "integer",
-            "description": "Epoch ms"
-          },
-          "user": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "email": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "email"
-            ]
-          }
-        },
-        "required": [
-          "accessToken",
-          "accessTokenExpiresAt",
-          "refreshToken",
-          "refreshTokenExpiresAt",
-          "user"
-        ]
-      },
       "Error": {
         "type": "object",
         "properties": {
@@ -92,6 +51,50 @@
         },
         "required": [
           "error"
+        ]
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string"
+          },
+          "accessTokenExpiresAt": {
+            "type": "integer",
+            "description": "Epoch ms"
+          },
+          "refreshToken": {
+            "type": "string"
+          },
+          "refreshTokenExpiresAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Epoch ms; null for mobile sessions, which never expire"
+          },
+          "user": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "email"
+            ]
+          }
+        },
+        "required": [
+          "accessToken",
+          "accessTokenExpiresAt",
+          "refreshToken",
+          "refreshTokenExpiresAt",
+          "user"
         ]
       },
       "CurrentUser": {
@@ -531,6 +534,19 @@
               "integer",
               "null"
             ]
+          },
+          "activationCodeUsedAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "When the current code was used (codes work once); null while unused"
+          },
+          "activationCodeDeviceId": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -541,7 +557,9 @@
           "validFrom",
           "validUntil",
           "maxDevices",
-          "lastValidatedAt"
+          "lastValidatedAt",
+          "activationCodeUsedAt",
+          "activationCodeDeviceId"
         ]
       },
       "DevicePage": {
@@ -828,6 +846,157 @@
     "parameters": {}
   },
   "paths": {
+    "/auth/signup": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Create an account and its company (pending approval); does not sign in",
+        "description": "The company starts `pending` with the new user as owner. When a developer admin approves it, the activation code is emailed to this address. An email that already has an account gets `409 already_exists` with `reason: \"email_taken\"`.",
+        "security": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 200
+                  },
+                  "company": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 120
+                      },
+                      "contactPerson": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      "phone": {
+                        "type": "string",
+                        "minLength": 10,
+                        "maxLength": 20
+                      },
+                      "address": {
+                        "type": "string",
+                        "minLength": 5,
+                        "maxLength": 500
+                      },
+                      "invoicePrefix": {
+                        "type": "string",
+                        "pattern": "^[A-Z0-9-]{1,10}$"
+                      },
+                      "email": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "maxLength": 200,
+                        "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                      },
+                      "gstin": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "pattern": "^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "contactPerson",
+                      "phone",
+                      "address",
+                      "invoicePrefix"
+                    ]
+                  }
+                },
+                "required": [
+                  "email",
+                  "password",
+                  "company"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "userId": {
+                      "type": "string"
+                    },
+                    "companyId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "userId",
+                    "companyId"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed (`invalid_argument`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State conflict (`already_exists`, `failed_precondition`, `conflict`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited (`resource_exhausted`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected error (`internal`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/login": {
       "post": {
         "tags": [
@@ -1935,7 +2104,7 @@
           "Licensing"
         ],
         "summary": "Register this phone on the company license with an activation code",
-        "description": "Denials are `409 failed_precondition` with `reason` (invalid_code, expired, device_limit, …). 10 wrong codes per user per hour.",
+        "description": "Each code works once: the first successful activation uses it up (a retry by the same user on the same phone still succeeds). Denials are `409 failed_precondition` with `reason` (invalid_code, code_used, expired, device_limit, …). 10 wrong codes per user per hour.",
         "security": [
           {
             "bearerAuth": []
@@ -3867,6 +4036,160 @@
         }
       }
     },
+    "/admin/companies/{companyId}/approve": {
+      "post": {
+        "tags": [
+          "Admin: companies"
+        ],
+        "summary": "Approve a company awaiting approval and issue its license; the activation code is emailed to the owner",
+        "description": "One transaction: the company becomes active and gets a license. The code is also returned once (only its hash is stored); it works once, on one phone.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[^/\\s]+$"
+            },
+            "required": true,
+            "name": "companyId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "validFrom": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "validUntil": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "maxDevices": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "validFrom",
+                  "validUntil",
+                  "maxDevices",
+                  "reason"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "licenseId": {
+                      "type": "string"
+                    },
+                    "activationCode": {
+                      "type": "string"
+                    },
+                    "emailedTo": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Owner address the code was emailed to; null when not sent (pass it on yourself)"
+                    }
+                  },
+                  "required": [
+                    "licenseId",
+                    "activationCode",
+                    "emailedTo"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed (`invalid_argument`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in or session expired (`unauthenticated`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`permission_denied`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State conflict (`already_exists`, `failed_precondition`, `conflict`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected error (`internal`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/licenses": {
       "get": {
         "tags": [
@@ -3985,7 +4308,7 @@
         "tags": [
           "Admin: licenses"
         ],
-        "summary": "Issue a license; the activation code is returned once and stored only as a hash",
+        "summary": "Issue a license; the activation code is returned once, emailed to the owner and stored only as a hash",
         "security": [
           {
             "bearerAuth": []
@@ -4046,11 +4369,19 @@
                     },
                     "activationCode": {
                       "type": "string"
+                    },
+                    "emailedTo": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Owner address the code was emailed to; null when not sent (pass it on yourself)"
                     }
                   },
                   "required": [
                     "licenseId",
-                    "activationCode"
+                    "activationCode",
+                    "emailedTo"
                   ]
                 }
               }
@@ -4504,7 +4835,8 @@
         "tags": [
           "Admin: licenses"
         ],
-        "summary": "Issue a new activation code (shown once); the old one stops working",
+        "summary": "Issue a new activation code (shown once, emailed to the owner); the old one stops working",
+        "description": "Codes work once, so this is also how another phone is added to a license.",
         "security": [
           {
             "bearerAuth": []
@@ -4563,10 +4895,18 @@
                   "properties": {
                     "activationCode": {
                       "type": "string"
+                    },
+                    "emailedTo": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Owner address the code was emailed to; null when not sent (pass it on yourself)"
                     }
                   },
                   "required": [
-                    "activationCode"
+                    "activationCode",
+                    "emailedTo"
                   ]
                 }
               }

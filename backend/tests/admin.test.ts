@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { LogMailer } from '../src/lib/mailer.js'
+import { emailActivationCode } from '../src/modules/licenses/activationCodeMail.js'
 import { hashCode } from '../src/modules/licenses/activationCodes.js'
 import { apiAs, createAdmin } from './helpers/api.js'
-import { createUser, DAY, PROFILE, seedCompany } from './helpers/factories.js'
+import { createUser, DAY, PASSWORD, PROFILE, seedCompany } from './helpers/factories.js'
 import { useTestApp } from './helpers/testApp.js'
 
 /** Port of functions/test/admin.test.ts plus the portal's list queries. */
@@ -45,6 +47,53 @@ describe('companies', () => {
     expect((await as('super', 'post', '/admin/companies/co/status', { status: 'active', ...R })).body).toEqual({ status: 'active' })
     const ev = await env.db.auditEvent.findFirstOrThrow({ where: { type: 'company.status' } })
     expect(ev).toMatchObject({ actorId: 'super', companyId: 'co', reason: R.reason, details: { from: 'pending', to: 'active' } })
+  })
+
+  it('approving a sign-up activates it, issues a license and emails the one-time code to the owner', async () => {
+    const signup = await env.request.post('/api/v1/auth/signup').send({ email: 'new@owner.example', password: PASSWORD, company: PROFILE })
+    const { userId, companyId } = signup.body
+    const terms = { validFrom: Date.now() - 1000, validUntil: Date.now() + 365 * DAY, maxDevices: 2 }
+    const approve = (uid: string, o: object = {}) => as(uid, 'post', `/admin/companies/${companyId}/approve`, { ...terms, ...R, ...o })
+
+    expect((await approve('support')).status).toBe(403)
+    // Needs companies.manage as well as licenses.manage.
+    expect((await approve('lic-only')).status).toBe(403)
+    expect((await approve('super', { reason: '' })).status).toBe(400)
+    expect((await approve('super', { validUntil: terms.validFrom })).status).toBe(400)
+
+    const res = await approve('super')
+    expect(res.status).toBe(201)
+    expect(res.body.emailedTo).toBe('new@owner.example')
+    expect(await env.db.company.findUniqueOrThrow({ where: { id: companyId } })).toMatchObject({ status: 'active' })
+    expect(await env.db.license.findUniqueOrThrow({ where: { id: res.body.licenseId } })).toMatchObject({
+      companyId,
+      status: 'active',
+      maxDevices: 2,
+      activationCodeHash: hashCode(res.body.activationCode),
+      activationCodeUsedAt: null,
+    })
+    expect(env.mailer.sent).toEqual([expect.objectContaining({ to: 'new@owner.example', text: expect.stringContaining(res.body.activationCode) })])
+    const types = (await env.db.auditEvent.findMany({ where: { companyId } })).map((e) => e.type)
+    expect(types).toEqual(expect.arrayContaining(['user.signup', 'company.status', 'license.create']))
+
+    // Only a pending company can be approved.
+    expect((await approve('super')).status).toBe(409)
+    expect((await as('super', 'post', '/admin/companies/nope/approve', { ...terms, ...R })).status).toBe(404)
+    expect(await env.db.license.count({ where: { companyId } })).toBe(1)
+
+    // The owner signs in and activates one phone with the emailed code.
+    const activate = (deviceId: string) =>
+      as(userId, 'post', `/companies/${companyId}/license/activate`, { activationCode: res.body.activationCode, deviceId })
+    expect((await activate('phone-1')).body).toMatchObject({ licenseStatus: 'active', deviceStatus: 'active' })
+    expect((await activate('phone-2')).body.error.reason).toBe('code_used')
+  })
+
+  it('two admins approving at once issue one license', async () => {
+    await env.db.company.update({ where: { id: 'co' }, data: { status: 'pending' } })
+    const body = { validFrom: 0, validUntil: Date.now() + DAY, maxDevices: 1, ...R }
+    const results = await Promise.all([1, 2].map(() => as('super', 'post', '/admin/companies/co/approve', body)))
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409])
+    expect(await env.db.license.count({ where: { companyId: 'co' } })).toBe(2)
   })
 
   it('creates an active company with an owner account (new or existing user)', async () => {
@@ -93,6 +142,7 @@ describe('licenses', () => {
   it('creates a license; the code is shown once and stored only as a hash', async () => {
     const res = await as('lic-only', 'post', '/admin/companies/co/licenses', { validFrom: Date.now(), validUntil: Date.now() + 365 * DAY, maxDevices: 3 })
     expect(res.status).toBe(201)
+    expect(res.body.emailedTo).toBe('owner@example.test')
     const stored = await env.db.license.findUniqueOrThrow({ where: { id: res.body.licenseId } })
     expect(stored.activationCodeHash).toBe(hashCode(res.body.activationCode))
     expect(JSON.stringify(stored)).not.toContain(res.body.activationCode.slice(5))
@@ -133,6 +183,24 @@ describe('licenses', () => {
     const activate = (code: string) => as('op', 'post', '/companies/co/license/activate', { activationCode: code, deviceId: 'new-phone' })
     expect((await activate('JCBW-AAAA-BBBB-CCCC')).body.error.reason).toBe('invalid_code')
     expect((await activate(activationCode)).status).toBe(200)
+  })
+
+  it('a new code replaces a used one and is emailed to the owner', async () => {
+    const activate = (code: string, deviceId: string) => as('op', 'post', '/companies/co/license/activate', { activationCode: code, deviceId })
+    expect((await activate('JCBW-AAAA-BBBB-CCCC', 'phone-a')).status).toBe(200)
+    const used = (await as('super', 'get', '/admin/companies/co/licenses/lic-co')).body
+    expect(used).toMatchObject({ activationCodeUsedAt: expect.any(Number), activationCodeDeviceId: 'phone-a' })
+
+    const res = await as('super', 'post', '/admin/companies/co/licenses/lic-co/rotate-code', R)
+    expect(res.body.emailedTo).toBe('owner@example.test')
+    expect(env.mailer.sent.at(-1)!.text).toContain(res.body.activationCode)
+    expect((await as('super', 'get', '/admin/companies/co/licenses/lic-co')).body).toMatchObject({ activationCodeUsedAt: null, activationCodeDeviceId: null })
+    expect((await activate(res.body.activationCode, 'phone-b')).status).toBe(200)
+  })
+
+  it('codes are never sent through the log-only mailer (no SMTP)', async () => {
+    const ctx = { ...env.ctx, mailer: new LogMailer(env.ctx.logger) }
+    expect(await emailActivationCode(ctx, 'co', 'JCBW-AAAA-BBBB-CCCC')).toBeNull()
   })
 
   it('a license is only reachable through its own company', async () => {

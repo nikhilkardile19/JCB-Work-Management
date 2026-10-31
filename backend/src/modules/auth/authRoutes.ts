@@ -1,7 +1,8 @@
 import type { Request } from 'express'
 import type { Api } from '../../lib/http.js'
 import { emailSchema, z } from '../../lib/validation.js'
-import { currentUser, forgotPassword, login, resetPassword } from './authService.js'
+import { CompanyProfileInput } from '../companies/companyProfile.js'
+import { currentUser, forgotPassword, login, resetPassword, signUp } from './authService.js'
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from './passwords.js'
 import { endSession, refreshSession, type ClientMeta } from './sessions.js'
 
@@ -10,10 +11,15 @@ const Session = z
     accessToken: z.string(),
     accessTokenExpiresAt: z.number().int().openapi({ description: 'Epoch ms' }),
     refreshToken: z.string(),
-    refreshTokenExpiresAt: z.number().int().openapi({ description: 'Epoch ms' }),
+    refreshTokenExpiresAt: z.number().int().nullable().openapi({ description: 'Epoch ms; null for mobile sessions, which never expire' }),
     user: z.object({ id: z.string(), email: z.string() }),
   })
   .openapi('Session')
+
+const NewPassword = z
+  .string()
+  .min(MIN_PASSWORD_LENGTH, `Use at least ${MIN_PASSWORD_LENGTH} characters.`)
+  .max(MAX_PASSWORD_LENGTH)
 
 const Me = z
   .object({
@@ -31,6 +37,24 @@ const meta = (req: Request): ClientMeta => ({ ip: req.ip, userAgent: req.get('us
 
 export function registerAuthRoutes(api: Api) {
   const { ctx } = api
+
+  api.route(
+    {
+      method: 'post',
+      path: '/auth/signup',
+      tag: 'Auth',
+      summary: 'Create an account and its company (pending approval); does not sign in',
+      description:
+        'The company starts `pending` with the new user as owner. When a developer admin approves it, the activation code is emailed to this address. ' +
+        'An email that already has an account gets `409 already_exists` with `reason: "email_taken"`.',
+      auth: 'none',
+      body: z.object({ email: emailSchema, password: NewPassword, company: CompanyProfileInput }),
+      response: z.object({ userId: z.string(), companyId: z.string() }),
+      status: 201,
+      errors: [409, 429],
+    },
+    ({ body, req }) => signUp(ctx, body, meta(req)),
+  )
 
   api.route(
     {
@@ -104,13 +128,7 @@ export function registerAuthRoutes(api: Api) {
       tag: 'Auth',
       summary: 'Set a new password from a reset link; signs out every session',
       auth: 'none',
-      body: z.object({
-        token: z.string().min(16).max(200),
-        password: z
-          .string()
-          .min(MIN_PASSWORD_LENGTH, `Use at least ${MIN_PASSWORD_LENGTH} characters.`)
-          .max(MAX_PASSWORD_LENGTH),
-      }),
+      body: z.object({ token: z.string().min(16).max(200), password: NewPassword }),
     },
     async ({ body }) => {
       await resetPassword(ctx, body.token, body.password)

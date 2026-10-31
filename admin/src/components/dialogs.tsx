@@ -126,10 +126,13 @@ export function ReasonDialog({
 }
 
 /** Shows a new activation code exactly once. */
-export function CodeDialog({ code, onClose }: { code: string; onClose: () => void }) {
+export function CodeDialog({ code, emailedTo, onClose }: { code: string; emailedTo: string | null; onClose: () => void }) {
   return (
     <Modal title="Activation code" onClose={onClose}>
-      <p>Give this code to the company owner. It is shown only now and is not stored — copy it before closing.</p>
+      <p>
+        {emailedTo ? `Emailed to ${emailedTo}.` : 'It could not be emailed, so give it to the company owner yourself.'} The code works once, on one phone.
+      </p>
+      <p>It is shown only now and is not stored — copy it before closing.</p>
       <p className="code-display">
         <Copyable text={code} />
       </p>

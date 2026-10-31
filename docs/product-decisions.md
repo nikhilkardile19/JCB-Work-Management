@@ -28,6 +28,8 @@ it can be changed without rework.
 | 16 | Data retention / closure | Suspended/expired company data retained 12 months, then deleted on written request. | PROPOSED | policy doc |
 | 17 | Support process | Customer raises replacement request in-app; developer admin verifies by phone and approves in portal. | PROPOSED | — |
 | 18 | Multiple invoices per range | Allowed; split by site or machine is allowed. Constraint: a work log can be in only one non-cancelled invoice. | PROPOSED | invoice module |
+| 19 | Mobile onboarding | Self sign-up in the app (email, password, company details) → company `pending` → developer admin approves in the portal, which issues the license and emails the activation code to the owner → owner signs in, enters the code, reaches the dashboard. Each activation code works **once, on one phone**; another phone (team member, replacement, reinstall) needs a new code from support. | CONFIRMED (2026-10-31) | `backend/src/modules/auth/`, `admin/approve`, `licenses/licenseRules.ts` |
+| 20 | Mobile session lifetime | Never expires. Ends on sign-out or uninstall; also, for security, on password reset, a disabled account or detected refresh-token theft. Portal sessions stay at 12 h. | CONFIRMED (2026-10-31) | `backend/src/modules/auth/sessions.ts` |
 
 ## Money, time, IDs (engineering decisions — not product-owner items)
 

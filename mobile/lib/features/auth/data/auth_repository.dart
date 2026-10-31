@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../../company/domain/company.dart';
+
 class AppUser {
   const AppUser({required this.uid, required this.email});
 
@@ -28,6 +30,14 @@ abstract interface class AuthRepository {
   Stream<AppUser?> authStateChanges();
 
   Future<AppUser> signIn({required String email, required String password});
+
+  /// Creates the account and its company, which waits for developer-admin
+  /// approval. Does not sign in.
+  Future<void> signUp({
+    required String email,
+    required String password,
+    required CompanyProfile profile,
+  });
 
   Future<void> sendPasswordReset(String email);
 

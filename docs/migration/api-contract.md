@@ -16,7 +16,7 @@ that exists today; nothing is invented. The mapping is in
 - IDs are strings. Existing Firestore IDs and Firebase UIDs are kept as-is;
   new server-generated IDs are UUID v4.
 - Auth: `Authorization: Bearer <accessToken>` on everything except
-  `/auth/login`, `/auth/refresh`, `/auth/forgot-password`,
+  `/auth/signup`, `/auth/login`, `/auth/refresh`, `/auth/forgot-password`,
   `/auth/reset-password` and `/health*`.
 - The mobile app sends `X-Device-Id: <installation id>` on every request.
   Endpoints that act "as this phone" (sync push, invoice numbers) require it.
@@ -60,6 +60,7 @@ Non-2xx responses (except the sync conflict below) have this body:
 
 | Method & path | Body | Response |
 |---|---|---|
+| `POST /auth/signup` | `{email, password, company: CompanyProfile}` (password ≥ 8 chars) | `201 {userId, companyId}` — the company is `pending` with the new user as owner. Does **not** sign in. |
 | `POST /auth/login` | `{email, password, client: "mobile"\|"portal"}` | `200 Session` |
 | `POST /auth/refresh` | `{refreshToken}` | `200 Session` (old refresh token is revoked — rotation) |
 | `POST /auth/logout` | `{refreshToken}` | `204` (revokes that session) |
@@ -72,10 +73,21 @@ type Session = {
   accessToken: string            // JWT, ~15 min
   accessTokenExpiresAt: number   // ms
   refreshToken: string           // opaque, stored hashed server-side
-  refreshTokenExpiresAt: number  // ms; mobile ≈ 60 days sliding, portal ≈ 12 h
+  refreshTokenExpiresAt: number | null  // ms; null for mobile (never expires), portal ≈ 12 h
   user: { id: string; email: string }
 }
 ```
+
+Mobile sessions never expire: they end on sign-out, a password reset, a
+disabled account or refresh-token reuse detection. Uninstalling the app
+removes the token from the phone (it lives in Keystore-backed storage
+excluded from backups).
+
+Sign-up: an email that already has an account (with or without a password)
+gets `409 already_exists` `reason: "email_taken"`; 20 sign-ups per client IP
+per hour. The mobile onboarding is: sign up → developer admin approves
+(`POST /admin/companies/:companyId/approve`), which emails the activation
+code to the owner → owner signs in → enters the code → dashboard.
 
 Login/refresh failures: `401 unauthenticated` with `reason` one of
 `invalid_credentials`, `invalid_refresh_token`; `403 permission_denied`
@@ -138,7 +150,12 @@ type LicenseState = {
 }
 ```
 
-Denials: `409 failed_precondition` with `reason` ∈ `invalid_code`,
+Activation codes work **once**: the first successful activation (or
+replacement request) uses the code up; a retry by the same user on the same
+phone still succeeds. Another phone needs a new code from support
+(`rotate-code`).
+
+Denials: `409 failed_precondition` with `reason` ∈ `invalid_code`, `code_used`,
 `not_started`, `expired`, `suspended`, `revoked`, `pending`, `device_limit`,
 `device_revoked`, `company_inactive`; `403 permission_denied`
 `reason: "not_member"`; `400 invalid_argument`; `429` after 10 wrong codes
@@ -151,7 +168,7 @@ per user per hour.
 | `POST /companies/:companyId/device-replacements` | active member, company active | `{activationCode, newDeviceId, newDeviceModel?, reason}` → `200 {requestId: string\|null, status: "pending"\|"already_active"}` |
 | `GET /companies/:companyId/device-replacements/:requestId` | requester, or owner/admin | `200 {requestId, status: "pending"\|"approved"\|"rejected", reviewReason: string\|null}` |
 
-Same denial codes as activation (`invalid_code`, license status, `device_revoked`).
+Same denial codes as activation (`invalid_code`, `code_used`, license status, `device_revoked`). Filing a request uses up the code.
 
 ## Mobile — invoice numbers (replaces `allocateInvoiceNumber`)
 
@@ -225,12 +242,13 @@ All under `/admin`; caller must be in `developer_admins` (role `super`, or
 | `POST /admin/companies` | `companies.manage` | `CompanyProfile & {ownerEmail}` → `{companyId, newUser}` (company created `active`) |
 | `PATCH /admin/companies/:companyId` | `companies.manage` | `CompanyProfile` → `{ok: true}` |
 | `POST /admin/companies/:companyId/status` | `companies.manage` | `{status, reason}` → `{status}` |
+| `POST /admin/companies/:companyId/approve` | `companies.manage` + `licenses.manage` | `{validFrom, validUntil, maxDevices, reason}` → `201 {licenseId, activationCode, emailedTo}`. Pending companies only (`409` otherwise): activates the company and issues its license in one transaction, then emails the code to the owner. |
 | `GET /admin/licenses?status&companyId&cursor` | any admin | `Page<License>` (by `validUntil` ascending) |
-| `POST /admin/companies/:companyId/licenses` | `licenses.manage` | `{validFrom, validUntil, maxDevices}` → `{licenseId, activationCode}` (code shown once) |
+| `POST /admin/companies/:companyId/licenses` | `licenses.manage` | `{validFrom, validUntil, maxDevices}` → `{licenseId, activationCode, emailedTo}` (code shown once) |
 | `GET /admin/companies/:companyId/licenses/:licenseId` | any admin | `License` |
 | `PATCH /admin/companies/:companyId/licenses/:licenseId` | `licenses.manage` | `{validUntil?, maxDevices?, reason}` → `{ok: true}` |
 | `POST /admin/companies/:companyId/licenses/:licenseId/status` | `licenses.manage` | `{status: "active"\|"suspended"\|"revoked", reason}` → `{status}` |
-| `POST /admin/companies/:companyId/licenses/:licenseId/rotate-code` | `licenses.manage` | `{reason}` → `{activationCode}` |
+| `POST /admin/companies/:companyId/licenses/:licenseId/rotate-code` | `licenses.manage` | `{reason}` → `{activationCode, emailedTo}` — also how another phone is added, since codes work once |
 | `GET /admin/devices?status&companyId&licenseId&cursor` | any admin | `Page<Device>` (last seen first) |
 | `GET /admin/companies/:companyId/devices/:deviceId` | any admin | `Device` |
 | `POST /admin/companies/:companyId/devices/:deviceId/revoke` | `devices.revoke` | `{reason}` → `{ok: true}` |
@@ -241,6 +259,11 @@ All under `/admin`; caller must be in `developer_admins` (role `super`, or
 Response types are exactly those in `admin/src/lib/adminApi.ts`
 (`Company`, `Member`, `License`, `Device`, `ReplacementRequest`,
 `AuditEvent`, `DashboardMetrics`, `AdminProfile`), with `Cursor` = string.
+Every newly issued code is emailed to the company owner and `emailedTo` is
+that address; it is `null` when the code was not sent (no SMTP configured —
+codes are never written to the log mailer — or the mail server refused), and
+the admin passes the code on. `License` carries `activationCodeUsedAt` and
+`activationCodeDeviceId` (null while the current code is unused).
 Reasons are 3–500 characters. Business rules are those of
 `firebase/functions/src/admin.ts` and `replacements.ts` (revoked licenses
 are frozen; reactivation needs a future end date; renewal of an expired

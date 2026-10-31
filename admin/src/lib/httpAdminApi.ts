@@ -7,6 +7,7 @@ import type {
   Cursor,
   DashboardMetrics,
   Device,
+  IssuedCode,
   License,
   Member,
   Page,
@@ -62,12 +63,14 @@ export function createHttpAdminApi(client: ApiClient): AdminApi {
     async setCompanyStatus(companyId, status, reason) {
       await post(path`/admin/companies/${companyId}/status`, { status, reason })
     },
+    approveCompany: ({ companyId, validFrom, validUntil, maxDevices, reason }) =>
+      post<IssuedCode & { licenseId: string }>(path`/admin/companies/${companyId}/approve`, { validFrom, validUntil, maxDevices, reason }),
     createCompany: (input) => post<{ companyId: string; newUser: boolean }>('/admin/companies', { ...profileOf(input), ownerEmail: input.ownerEmail }),
     async updateCompany(companyId, profile) {
       await patch(path`/admin/companies/${companyId}`, profileOf(profile))
     },
     createLicense: ({ companyId, validFrom, validUntil, maxDevices }) =>
-      post<{ licenseId: string; activationCode: string }>(path`/admin/companies/${companyId}/licenses`, { validFrom, validUntil, maxDevices }),
+      post<IssuedCode & { licenseId: string }>(path`/admin/companies/${companyId}/licenses`, { validFrom, validUntil, maxDevices }),
     async setLicenseStatus(companyId, licenseId, status, reason) {
       await post(`${license(companyId, licenseId)}/status`, { status, reason })
     },
@@ -75,7 +78,7 @@ export function createHttpAdminApi(client: ApiClient): AdminApi {
       await patch(license(companyId, licenseId), { validUntil, maxDevices, reason })
     },
     rotateActivationCode: (companyId, licenseId, reason) =>
-      post<{ activationCode: string }>(`${license(companyId, licenseId)}/rotate-code`, { reason }),
+      post<IssuedCode>(`${license(companyId, licenseId)}/rotate-code`, { reason }),
     async revokeDevice(companyId, deviceId, reason) {
       await post(path`/admin/companies/${companyId}/devices/${deviceId}/revoke`, { reason })
     },

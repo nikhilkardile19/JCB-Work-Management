@@ -26,6 +26,8 @@ export const LIMITS = {
   loginFailuresPerIp: { max: 50, windowMs: HOUR_MS / 4, message: 'Too many attempts. Wait a few minutes and try again.' },
   /** Reset requests per client IP (stops mailing many addresses from one source). */
   resetRequestsPerIp: { max: 20, windowMs: HOUR_MS, message: 'Too many reset requests. Try again later.' },
+  /** Mobile sign-ups per client IP (each creates an account and a company). */
+  signupsPerIp: { max: 20, windowMs: HOUR_MS, message: 'Too many sign-ups from this network. Try again later.' },
   /** Password reset emails, per address (extra requests are silently ignored). */
   resetEmails: { max: 3, windowMs: HOUR_MS, message: 'Too many reset requests.' },
 } satisfies Record<string, Limit>

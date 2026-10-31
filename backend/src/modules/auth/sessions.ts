@@ -3,7 +3,7 @@ import type { Tx } from '../../database/prisma.js'
 import type { SessionClient } from '../../generated/prisma/client.js'
 import { unauthenticated } from '../../lib/errors.js'
 import { newId, randomToken, sha256 } from '../../lib/ids.js'
-import { DAY_MS, HOUR_MS } from '../../lib/time.js'
+import { HOUR_MS } from '../../lib/time.js'
 import { recordEvent } from '../audit/auditEvents.js'
 import { signAccessToken } from './tokens.js'
 
@@ -11,7 +11,8 @@ export interface Session {
   accessToken: string
   accessTokenExpiresAt: number
   refreshToken: string
-  refreshTokenExpiresAt: number
+  /** Null for mobile sessions, which never expire. */
+  refreshTokenExpiresAt: number | null
   user: { id: string; email: string }
 }
 
@@ -22,11 +23,10 @@ export interface ClientMeta {
 
 const invalidRefresh = () => unauthenticated('Your session has ended. Sign in again.', 'invalid_refresh_token')
 
-function refreshExpiry(ctx: AppContext, client: SessionClient, now: Date, familyExpiry?: Date): Date {
-  if (client === 'mobile') {
-    // Sliding: a phone that keeps refreshing stays signed in (offline-first).
-    return new Date(now.getTime() + ctx.config.REFRESH_TOKEN_TTL_DAYS_MOBILE * DAY_MS)
-  }
+function refreshExpiry(ctx: AppContext, client: SessionClient, now: Date, familyExpiry?: Date | null): Date | null {
+  // Mobile: never expires, however long the phone stays offline. Sign-out,
+  // password reset, a disabled account or reuse detection end it.
+  if (client === 'mobile') return null
   // Portal: absolute lifetime from sign-in.
   return familyExpiry ?? new Date(now.getTime() + ctx.config.REFRESH_TOKEN_TTL_HOURS_PORTAL * HOUR_MS)
 }
@@ -37,7 +37,7 @@ async function issue(
   user: { id: string; email: string; tokenVersion: number },
   client: SessionClient,
   familyId: string,
-  expiresAt: Date,
+  expiresAt: Date | null,
   meta: ClientMeta,
 ): Promise<Session & { refreshTokenId: string }> {
   const refreshToken = randomToken()
@@ -60,7 +60,7 @@ async function issue(
     accessToken: access.token,
     accessTokenExpiresAt: access.expiresAt,
     refreshToken,
-    refreshTokenExpiresAt: expiresAt.getTime(),
+    refreshTokenExpiresAt: expiresAt?.getTime() ?? null,
     user: { id: user.id, email: user.email },
     refreshTokenId: id,
   }
@@ -108,7 +108,7 @@ export async function refreshSession(ctx: AppContext, refreshToken: string, meta
       await revokeFamily(tx, row.familyId, now, 'reuse_detected')
       return { reuse: { userId: row.userId, familyId: row.familyId } }
     }
-    if (row.revokedAt || row.expiresAt <= now) return { error: invalidRefresh() }
+    if (row.revokedAt || (row.expiresAt && row.expiresAt <= now)) return { error: invalidRefresh() }
     if (!user || user.status !== 'active') {
       await revokeFamily(tx, row.familyId, now, 'user_disabled')
       return { error: invalidRefresh() }

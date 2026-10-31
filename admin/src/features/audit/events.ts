@@ -15,6 +15,7 @@ const LABELS: Record<string, string> = {
   'replacement.request': 'Replacement requested',
   'replacement.approve': 'Replacement approved',
   'replacement.reject': 'Replacement rejected',
+  'user.signup': 'Signed up in the app',
   'user.invite': 'User added',
   'user.reinvite': 'User re-added',
   'user.role': 'User role changed',

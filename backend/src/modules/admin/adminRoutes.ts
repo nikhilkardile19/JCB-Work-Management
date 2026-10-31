@@ -1,4 +1,5 @@
 import type { AppContext } from '../../context.js'
+import type { Tx } from '../../database/prisma.js'
 import type { CompanyStatus, Prisma } from '../../generated/prisma/client.js'
 import { invalid, notFound, precondition } from '../../lib/errors.js'
 import type { Api } from '../../lib/http.js'
@@ -8,8 +9,9 @@ import { DAY_MS } from '../../lib/time.js'
 import { emailSchema, idSchema, reasonSchema, z } from '../../lib/validation.js'
 import { recordEvent } from '../audit/auditEvents.js'
 import { changedFields, CompanyOut, companyOut, CompanyProfileInput } from '../companies/companyProfile.js'
+import { emailActivationCode } from '../licenses/activationCodeMail.js'
 import { generateActivationCode, hashCode } from '../licenses/activationCodes.js'
-import { countActiveDevices } from '../licenses/licenseRules.js'
+import { countActiveDevices, freshCode } from '../licenses/licenseRules.js'
 import { findOrCreateUser } from '../members/users.js'
 import { requireAdmin, type AdminPermission } from './adminAccess.js'
 import { DeviceOut, deviceOut, EventOut, eventOut, LicenseOut, licenseOut, pageOf, RequestOut, requestOut } from './adminViews.js'
@@ -35,6 +37,43 @@ async function license(ctx: AppContext, companyId: string, licenseId: string) {
 
 const notRevoked = (l: { status: string }) => {
   if (l.status === 'revoked') throw precondition('A revoked license cannot be changed. Create a new license.')
+}
+
+const licenseTerms = {
+  validFrom: z.number().int().min(0),
+  validUntil: z.number().int().min(0),
+  maxDevices: z.number().int().min(1).max(100),
+}
+type LicenseTerms = { validFrom: number; validUntil: number; maxDevices: number }
+const endsAfterStart = (d: LicenseTerms) => d.validUntil > d.validFrom
+const endsAfterStartError = { message: 'validUntil must be after validFrom', path: ['validUntil'] }
+
+/** A newly issued code: returned once, and emailed to the owner when possible. */
+const IssuedCode = {
+  activationCode: z.string(),
+  emailedTo: z.string().nullable().openapi({ description: 'Owner address the code was emailed to; null when not sent (pass it on yourself)' }),
+}
+
+/** Creates an active license; only the code's hash is stored. */
+async function issueLicense(tx: Tx, companyId: string, terms: LicenseTerms, adminId: string, now: Date) {
+  const activationCode = generateActivationCode()
+  const licenseId = newId()
+  await tx.license.create({
+    data: {
+      id: licenseId,
+      companyId,
+      status: 'active',
+      validFrom: new Date(terms.validFrom),
+      validUntil: new Date(terms.validUntil),
+      maxDevices: terms.maxDevices,
+      activationCodeHash: hashCode(activationCode),
+      createdBy: adminId,
+      createdAt: now,
+      updatedAt: now,
+    },
+  })
+  await recordEvent(tx, now, { type: 'license.create', actorId: adminId, companyId, licenseId, maxDevices: terms.maxDevices })
+  return { licenseId, activationCode }
 }
 
 export function registerAdminRoutes(api: Api) {
@@ -236,6 +275,42 @@ export function registerAdminRoutes(api: Api) {
     },
   )
 
+  api.route(
+    {
+      method: 'post',
+      path: '/admin/companies/:companyId/approve',
+      tag: TAG.companies,
+      summary: 'Approve a company awaiting approval and issue its license; the activation code is emailed to the owner',
+      description: 'One transaction: the company becomes active and gets a license. The code is also returned once (only its hash is stored); it works once, on one phone.',
+      params: CompanyParams,
+      body: z.object({ ...licenseTerms, reason: reasonSchema }).refine(endsAfterStart, endsAfterStartError),
+      response: z.object({ licenseId: z.string(), ...IssuedCode }),
+      status: 201,
+      errors: [403, 404, 409],
+    },
+    async ({ params, body, user }) => {
+      await admin(user.id, 'companies.manage')
+      await admin(user.id, 'licenses.manage')
+      const now = ctx.clock()
+      const { reason, ...terms } = body
+      const issued = await ctx.db.$transaction(async (tx) => {
+        // Conditional update: of two admins approving at once, only one issues a license.
+        const approved = await tx.company.updateMany({
+          where: { id: params.companyId, status: 'pending' },
+          data: { status: 'active', updatedBy: user.id, updatedAt: now },
+        })
+        if (approved.count !== 1) {
+          if (!(await tx.company.findUnique({ where: { id: params.companyId } }))) throw notFound('Company')
+          throw precondition('Only a company awaiting approval can be approved.')
+        }
+        await recordEvent(tx, now, { type: 'company.status', actorId: user.id, companyId: params.companyId, from: 'pending', to: 'active', reason })
+        return issueLicense(tx, params.companyId, terms, user.id, now)
+      })
+      const emailedTo = await emailActivationCode(ctx, params.companyId, issued.activationCode, { approved: true })
+      return { ...issued, emailedTo }
+    },
+  )
+
   // --- Licenses ----------------------------------------------------------------
 
   api.route(
@@ -272,12 +347,10 @@ export function registerAdminRoutes(api: Api) {
       method: 'post',
       path: '/admin/companies/:companyId/licenses',
       tag: TAG.licenses,
-      summary: 'Issue a license; the activation code is returned once and stored only as a hash',
+      summary: 'Issue a license; the activation code is returned once, emailed to the owner and stored only as a hash',
       params: CompanyParams,
-      body: z
-        .object({ validFrom: z.number().int().min(0), validUntil: z.number().int().min(0), maxDevices: z.number().int().min(1).max(100) })
-        .refine((d) => d.validUntil > d.validFrom, { message: 'validUntil must be after validFrom', path: ['validUntil'] }),
-      response: z.object({ licenseId: z.string(), activationCode: z.string() }),
+      body: z.object(licenseTerms).refine(endsAfterStart, endsAfterStartError),
+      response: z.object({ licenseId: z.string(), ...IssuedCode }),
       status: 201,
       errors: [403, 404],
     },
@@ -286,25 +359,9 @@ export function registerAdminRoutes(api: Api) {
       const now = ctx.clock()
       const company = await ctx.db.company.findUnique({ where: { id: params.companyId } })
       if (!company) throw notFound('Company')
-      const activationCode = generateActivationCode()
-      const licenseId = newId()
-      await ctx.db.license.create({
-        data: {
-          id: licenseId,
-          companyId: params.companyId,
-          status: 'active',
-          validFrom: new Date(body.validFrom),
-          validUntil: new Date(body.validUntil),
-          maxDevices: body.maxDevices,
-          activationCodeHash: hashCode(activationCode),
-          createdBy: user.id,
-          createdAt: now,
-          updatedAt: now,
-        },
-      })
-      await recordEvent(ctx.db, now, { type: 'license.create', actorId: user.id, companyId: params.companyId, licenseId, maxDevices: body.maxDevices })
+      const issued = await ctx.db.$transaction((tx) => issueLicense(tx, params.companyId, body, user.id, now))
       // The plaintext code is returned once and never stored.
-      return { licenseId, activationCode }
+      return { ...issued, emailedTo: await emailActivationCode(ctx, params.companyId, issued.activationCode) }
     },
   )
 
@@ -398,10 +455,11 @@ export function registerAdminRoutes(api: Api) {
       method: 'post',
       path: '/admin/companies/:companyId/licenses/:licenseId/rotate-code',
       tag: TAG.licenses,
-      summary: 'Issue a new activation code (shown once); the old one stops working',
+      summary: 'Issue a new activation code (shown once, emailed to the owner); the old one stops working',
+      description: 'Codes work once, so this is also how another phone is added to a license.',
       params: LicenseParams,
       body: z.object({ reason: reasonSchema }),
-      response: z.object({ activationCode: z.string() }),
+      response: z.object(IssuedCode),
       errors: [403, 404, 409],
     },
     async ({ params, body, user }) => {
@@ -409,9 +467,9 @@ export function registerAdminRoutes(api: Api) {
       const now = ctx.clock()
       notRevoked(await license(ctx, params.companyId, params.licenseId))
       const activationCode = generateActivationCode()
-      await ctx.db.license.update({ where: { id: params.licenseId }, data: { activationCodeHash: hashCode(activationCode) } })
+      await ctx.db.license.update({ where: { id: params.licenseId }, data: freshCode(hashCode(activationCode)) })
       await recordEvent(ctx.db, now, { type: 'license.rotate_code', actorId: user.id, companyId: params.companyId, licenseId: params.licenseId, reason: body.reason })
-      return { activationCode }
+      return { activationCode, emailedTo: await emailActivationCode(ctx, params.companyId, activationCode) }
     },
   )
 

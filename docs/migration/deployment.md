@@ -3,11 +3,11 @@
 Provider-neutral. Needs: a Node.js 24 host (container or VM) behind HTTPS, a
 managed PostgreSQL 15+ (17 recommended) on a **private network**, a static
 host for the admin portal (Firebase Hosting is kept for that only), and an
-SMTP account for password-reset email.
+SMTP account for password-reset and activation-code email.
 
 ```
  Android app ──HTTPS──▶ API (Node, ≥2 instances) ──TLS, private──▶ PostgreSQL
- Admin portal (static) ──HTTPS──▶ API              SMTP ◀── API (reset emails)
+ Admin portal (static) ──HTTPS──▶ API              SMTP ◀── API (reset, code emails)
 ```
 
 The API and the database must not share one machine in production, and the
@@ -23,7 +23,7 @@ database must not accept connections from the internet.
 | `CORS_ORIGINS` | `http://localhost:5173` | staging portal origin | production portal origin |
 | `PASSWORD_RESET_URL` | `http://localhost:5173/reset-password` | `https://<staging-portal>/reset-password` | `https://<portal>/reset-password` |
 | `API_DOCS_ENABLED` | on (default) | `true` (for testers) | off (default) |
-| SMTP | unset (links logged) | real, test inbox | real |
+| SMTP | unset (reset links logged; activation codes only shown in the portal) | real, test inbox | real |
 | Seed data | `npm run db:seed` | optional | **never** (the seed refuses) |
 | Portal build | `admin/.env.local` | `admin/.env.staging` (`npm run build -- --mode staging`) | `admin/.env.local` or CI secret `ADMIN_ENV_LOCAL` |
 | App build | `APP_ENV=dev` (default API `http://10.0.2.2:3000/api/v1`) | `APP_ENV=staging` + `API_BASE_URL` | `APP_ENV=prod` + `API_BASE_URL` |
@@ -97,9 +97,9 @@ The command prints a 24-hour link to set the password.
 
 ```bash
 cd mobile
-flutter build appbundle --release \
-  --dart-define=APP_ENV=prod \
-  --dart-define=API_BASE_URL=https://<api-host>/api/v1
+# config/prod.json sets APP_ENV=prod and the production API_BASE_URL
+# (currently https://jcb-api.onrender.com/api/v1).
+flutter build appbundle --release --dart-define-from-file=config/prod.json
 ```
 
 Release builds allow HTTPS only (`usesCleartextTraffic="false"`); cleartext

@@ -57,6 +57,58 @@ describe('login', () => {
   })
 })
 
+describe('sign-up', () => {
+  const COMPANY = { name: 'Sai Earthmovers', contactPerson: 'Ravi Patil', phone: '9876543210', address: 'Plot 4, MIDC Bhosari, Pune', invoicePrefix: 'SAI' }
+  const signUp = (o: object = {}) =>
+    env.request.post('/api/v1/auth/signup').send({ email: 'Ravi@Sai.example', password: 'strong-pass-1', company: COMPANY, ...o })
+
+  it('creates the account and a pending company owned by it, without signing in', async () => {
+    const res = await signUp()
+    expect(res.status).toBe(201)
+    expect(Object.keys(res.body).sort()).toEqual(['companyId', 'userId'])
+    const { userId, companyId } = res.body
+    expect(await env.db.user.findUniqueOrThrow({ where: { id: userId } })).toMatchObject({ email: 'ravi@sai.example', status: 'active' })
+    expect(await env.db.company.findUniqueOrThrow({ where: { id: companyId } })).toMatchObject({
+      name: 'Sai Earthmovers',
+      status: 'pending',
+      ownerUserId: userId,
+      email: null,
+    })
+    expect(await env.db.refreshToken.count()).toBe(0)
+    expect(await env.db.auditEvent.findFirstOrThrow({ where: { type: 'user.signup' } })).toMatchObject({ actorId: userId, companyId })
+
+    // Signing in later shows the company awaiting approval.
+    const { accessToken } = (await login('ravi@sai.example', 'strong-pass-1')).body
+    const memberships = await env.request.get('/api/v1/me/memberships').set('Authorization', `Bearer ${accessToken}`)
+    expect(memberships.body.items).toEqual([expect.objectContaining({ role: 'owner', company: expect.objectContaining({ id: companyId, status: 'pending' }) })])
+  })
+
+  it('refuses an email that already has an account (any case, with or without a password)', async () => {
+    await signUp()
+    const again = await signUp({ email: 'RAVI@sai.example' })
+    expect(again.status).toBe(409)
+    expect(again.body.error).toMatchObject({ code: 'already_exists', reason: 'email_taken' })
+    await createUser(env.db, 'invited', { email: 'invited@example.test', password: false })
+    expect((await signUp({ email: 'invited@example.test' })).body.error.reason).toBe('email_taken')
+    expect(await env.db.company.count()).toBe(1)
+  })
+
+  it('validates the account and company details', async () => {
+    const res = await signUp({ email: 'nope', password: 'short', company: { ...COMPANY, phone: '12', invoicePrefix: 'bad prefix' } })
+    expect(res.status).toBe(400)
+    expect(Object.keys(res.body.error.fields)).toEqual(expect.arrayContaining(['email', 'password', 'company.phone', 'company.invoicePrefix']))
+    expect(await env.db.user.count()).toBe(0)
+  })
+
+  it('limits sign-ups per client', async () => {
+    await createUser(env.db, 'u1')
+    for (let i = 0; i < 20; i++) expect((await signUp({ email: 'u1@example.test' })).status).toBe(409)
+    const res = await signUp({ email: 'new@example.test' })
+    expect(res.status).toBe(429)
+    expect(res.body.error.reason).toBe('rate_limited')
+  })
+})
+
 describe('access tokens', () => {
   it('protect endpoints and identify the user', async () => {
     await createUser(env.db, 'u1')
@@ -136,10 +188,16 @@ describe('refresh rotation', () => {
     expect((await refresh(first.refreshToken)).status).toBe(401)
   })
 
-  it('mobile sessions slide; portal sessions end 12 hours after sign-in', async () => {
+  it('mobile sessions never expire; portal sessions end 12 hours after sign-in', async () => {
     await createUser(env.db, 'u1')
     const mobile = (await login('u1@example.test')).body
-    expect(mobile.refreshTokenExpiresAt - Date.now()).toBeGreaterThan(59 * DAY)
+    expect(mobile.refreshTokenExpiresAt).toBeNull()
+    // A phone left offline for years is still signed in when it comes back.
+    env.clock.advance(5 * 365 * DAY)
+    const back = await refresh(mobile.refreshToken)
+    expect(back.status).toBe(200)
+    expect(back.body.refreshTokenExpiresAt).toBeNull()
+    expect(await env.db.refreshToken.count({ where: { client: 'mobile', expiresAt: { not: null } } })).toBe(0)
     const portal = (await login('u1@example.test', PASSWORD, 'portal')).body
     env.clock.advance(11 * 3_600_000)
     const later = (await refresh(portal.refreshToken)).body

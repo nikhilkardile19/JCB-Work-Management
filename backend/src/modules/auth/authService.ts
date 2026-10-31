@@ -1,8 +1,10 @@
 import type { AppContext } from '../../context.js'
+import { prismaCode } from '../../database/prisma.js'
 import type { SessionClient } from '../../generated/prisma/client.js'
 import { ApiError, denied, invalid, unauthenticated } from '../../lib/errors.js'
 import { newId, randomToken, sha256 } from '../../lib/ids.js'
 import { recordEvent } from '../audit/auditEvents.js'
+import type { CompanyProfile } from '../companies/companyProfile.js'
 import { assertWithinLimit, consume, LIMITS, tryConsume } from '../rate-limits/rateLimit.js'
 import { burnVerifyTime, hashPassword, needsRehash, verifyPassword } from './passwords.js'
 import { endAllSessions, startSession, type ClientMeta, type Session } from './sessions.js'
@@ -33,6 +35,46 @@ export async function login(
   const passwordHash = needsRehash(user.passwordHash!) ? await hashPassword(input.password) : undefined
   await ctx.db.user.update({ where: { id: user.id }, data: { lastLoginAt: now, ...(passwordHash ? { passwordHash } : {}) } })
   return startSession(ctx, user, input.client, meta)
+}
+
+const emailTaken = () =>
+  new ApiError('already_exists', 'An account with this email already exists. Sign in, or reset your password.', {
+    reason: 'email_taken',
+  })
+
+/**
+ * Mobile sign-up: the account and its company (pending, with the new user as
+ * owner) are created together. It does not sign in; once a developer admin
+ * approves the company, the activation code is emailed to the owner.
+ */
+export async function signUp(
+  ctx: AppContext,
+  input: { email: string; password: string; company: CompanyProfile },
+  meta: ClientMeta,
+) {
+  const now = ctx.clock()
+  // Counted before the lookup, so probing for registered emails is limited too.
+  await consume(ctx.db, `signup:ip:${meta.ip ?? 'unknown'}`, LIMITS.signupsPerIp, now)
+  if (await ctx.db.user.findUnique({ where: { email: input.email }, select: { id: true } })) throw emailTaken()
+
+  const passwordHash = await hashPassword(input.password)
+  const userId = newId()
+  const companyId = newId()
+  try {
+    await ctx.db.$transaction(async (tx) => {
+      await tx.user.create({ data: { id: userId, email: input.email, passwordHash, passwordChangedAt: now, createdAt: now } })
+      await tx.company.create({
+        data: { id: companyId, ...input.company, currency: 'INR', status: 'pending', ownerUserId: userId, createdBy: userId, updatedBy: userId, createdAt: now, updatedAt: now },
+      })
+      await tx.companyMember.create({ data: { companyId, userId, role: 'owner', status: 'active', createdAt: now } })
+      await recordEvent(tx, now, { type: 'user.signup', actorId: userId, companyId, email: input.email, name: input.company.name })
+    })
+  } catch (e) {
+    // Two sign-ups racing for one email: the loser gets the same answer.
+    if (prismaCode(e) === 'P2002') throw emailTaken()
+    throw e
+  }
+  return { userId, companyId }
 }
 
 export async function currentUser(ctx: AppContext, userId: string) {

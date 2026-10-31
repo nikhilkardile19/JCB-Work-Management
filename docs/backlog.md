@@ -11,13 +11,13 @@ apply. What remains:
 | Item | Why blocked | Unblocks |
 |------|-------------|----------|
 | Choose hosting for the API (Node 24) and a managed PostgreSQL 15+ | Billing/ownership | Staging and production (`docs/migration/deployment.md`) |
-| Choose an SMTP provider; set `SMTP_*` and `MAIL_FROM` | Account/billing | Password-reset emails (until then links are only logged) |
+| Choose an SMTP provider; set `SMTP_*` and `MAIL_FROM` | Account/billing | Password-reset and activation-code emails (until then reset links are only logged and codes are only shown in the portal) |
 | Confirm whether production Firestore/Auth hold real data (decision M1) | Only the owner can see the console | Run or skip the Firestore export/import at cutover |
 | Accept that users set a new password after cutover (decision M2) | Product decision | Cutover communication |
 | API domain + portal domain; add the API origin to the CSP in `firebase/firebase.json` | DNS ownership | Portal deploy (predeploy check) |
 | Update GitHub secret `ADMIN_ENV_LOCAL` to `VITE_API_BASE_URL=https://<api>/api/v1` | GitHub repo admin | Automatic portal deploy |
 | Create developer admins: `npm run admin:create -- --email … --role super` | Needs production DB access | Admin portal sign-in |
-| Confirm `docs/product-decisions.md` items 1–18 and migration decisions M1–M8 | Product decisions | All sprints (defaults used meanwhile) |
+| Confirm `docs/product-decisions.md` items 1–18 (19–20 confirmed) and migration decisions M1–M8 | Product decisions | All sprints (defaults used meanwhile) |
 
 ## User stories (epics → acceptance criteria summarized)
 

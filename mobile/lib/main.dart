@@ -6,6 +6,7 @@ import 'app/startup_error_app.dart';
 import 'core/config/app_config.dart';
 import 'core/errors/error_log.dart';
 import 'core/network/network_providers.dart';
+import 'features/splash/splash_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +21,7 @@ Future<void> main() async {
     overrides: [apiBaseUrlProvider.overrideWithValue(apiBaseUrl)],
   );
   recordUncaughtErrors(container.read(errorLogProvider));
+  await precacheLaunchImage();
   runApp(
     UncontrolledProviderScope(container: container, child: const JcbApp()),
   );

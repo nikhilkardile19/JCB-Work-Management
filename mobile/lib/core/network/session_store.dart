@@ -37,14 +37,17 @@ class AuthSession {
     accessToken: j['accessToken'] as String,
     accessTokenExpiresAt: (j['accessTokenExpiresAt'] as num).toInt(),
     refreshToken: j['refreshToken'] as String,
-    refreshTokenExpiresAt: (j['refreshTokenExpiresAt'] as num).toInt(),
+    refreshTokenExpiresAt: (j['refreshTokenExpiresAt'] as num?)?.toInt(),
     user: SessionUser.fromJson(j['user'] as Map<String, dynamic>),
   );
 
   final String accessToken;
   final int accessTokenExpiresAt;
   final String refreshToken;
-  final int refreshTokenExpiresAt;
+
+  /// Null for mobile sessions: they never expire, and end only on sign-out
+  /// (or when the server revokes them, e.g. after a password reset).
+  final int? refreshTokenExpiresAt;
   final SessionUser user;
 }
 

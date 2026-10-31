@@ -2,6 +2,17 @@ import '../../../core/network/api_client.dart';
 import '../domain/company.dart';
 import '../domain/permissions.dart';
 
+/// The contract's `CompanyProfile`; the server sets the rest.
+Json companyProfileBody(CompanyProfile p) => {
+  'name': p.name,
+  'contactPerson': p.contactPerson,
+  'phone': p.phone,
+  'address': p.address,
+  'invoicePrefix': p.invoicePrefix,
+  'email': p.email,
+  'gstin': p.gstin,
+};
+
 /// Server-side company data. REST implementation below; tests use a fake.
 abstract interface class CompanyRemoteSource {
   /// Active memberships of [uid], with their companies. Must fail (not return
@@ -60,7 +71,7 @@ class HttpCompanyRemoteSource implements CompanyRemoteSource {
     // Idempotent per ID: a retry after a lost reply returns the same company.
     final json = await _api.post(
       '/companies',
-      body: {..._body(profile), 'id': companyId},
+      body: {...companyProfileBody(profile), 'id': companyId},
     );
     return _toCompany(json);
   }
@@ -70,18 +81,10 @@ class HttpCompanyRemoteSource implements CompanyRemoteSource {
     required String companyId,
     required String uid,
     required CompanyProfile profile,
-  }) => _api.patch(apiPath(['companies', companyId]), body: _body(profile));
-
-  /// The contract's `CompanyProfile`; the server sets the rest.
-  static Json _body(CompanyProfile p) => {
-    'name': p.name,
-    'contactPerson': p.contactPerson,
-    'phone': p.phone,
-    'address': p.address,
-    'invoicePrefix': p.invoicePrefix,
-    'email': p.email,
-    'gstin': p.gstin,
-  };
+  }) => _api.patch(
+    apiPath(['companies', companyId]),
+    body: companyProfileBody(profile),
+  );
 
   static Company _toCompany(Json d) => Company(
     id: d['id'] as String,

@@ -28,6 +28,8 @@
 | Install | `flutter pub get` | `npm install` | `npm ci` |
 | Codegen | `dart run build_runner build -d` | — | `npx prisma generate` |
 | Run | `flutter run --dart-define=APP_ENV=dev` | `npm run dev` | `npm run dev` |
+| Run against production API | `flutter run --dart-define-from-file=config/prod.json` | — | — |
+| Release build | `flutter build apk --release --dart-define-from-file=config/prod.json` | `npm run build` | `npm run build` |
 | Lint / types | `flutter analyze` | `npm run lint` | `npm run typecheck` |
 | Test | `flutter test` | `npm test` | `npm test` (needs `TEST_DATABASE_URL`) |
 | DB migration | — | — | `npm run db:migrate -- --name <change>` |

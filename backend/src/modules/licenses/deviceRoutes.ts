@@ -6,17 +6,18 @@ import { recordEvent } from '../audit/auditEvents.js'
 import { requireActiveMember } from '../companies/access.js'
 import { assertWithinLimit, consume, LIMITS } from '../rate-limits/rateLimit.js'
 import { hashCode } from './activationCodes.js'
-import { countActiveDevices, effectiveStatus, lockLicense, type LicenseState } from './licenseRules.js'
+import { CODE_USED_MESSAGE, codeUsableBy, codeUse, countActiveDevices, effectiveStatus, lockLicense, type LicenseState } from './licenseRules.js'
 
 /**
  * Phone activation and license checks (ported from `functions/src/licenses.ts`).
  * The app never decides by itself that it is licensed; it caches what the
- * server says.
+ * server says. An activation code works once.
  */
-type DenyReason = 'invalid_code' | 'not_started' | 'expired' | 'suspended' | 'revoked' | 'pending' | 'device_limit' | 'device_revoked'
+type DenyReason = 'invalid_code' | 'code_used' | 'not_started' | 'expired' | 'suspended' | 'revoked' | 'pending' | 'device_limit' | 'device_revoked'
 
 const DENY_MESSAGES: Record<DenyReason, string> = {
   invalid_code: 'That activation code is not valid for this company.',
+  code_used: CODE_USED_MESSAGE,
   not_started: 'This license has not started yet.',
   expired: 'This license has expired. Contact support to renew.',
   suspended: 'This license is suspended. Contact support.',
@@ -66,14 +67,18 @@ async function activate(
   await assertWithinLimit(ctx.db, limitKey, LIMITS.codeFailures, now)
   const base = { companyId, deviceId: d.deviceId, uid, deviceModel: d.deviceModel ?? null }
 
+  const codeHash = hashCode(d.activationCode)
   const license = await ctx.db.license.findUnique({
-    where: { companyId_activationCodeHash: { companyId, activationCodeHash: hashCode(d.activationCode) } },
+    where: { companyId_activationCodeHash: { companyId, activationCodeHash: codeHash } },
   })
   try {
     if (!license) throw new Denied('invalid_code')
     const state = await ctx.db.$transaction(async (tx) => {
       await lockLicense(tx, license.id)
       const l = (await tx.license.findUniqueOrThrow({ where: { id: license.id } }))
+      // Re-checked under the lock: the code may have been replaced or used meanwhile.
+      if (l.activationCodeHash !== codeHash) throw new Denied('invalid_code')
+      if (!codeUsableBy(l, uid, d.deviceId)) throw new Denied('code_used', l.id)
       const status = effectiveStatus(l.status, l.validFrom, l.validUntil, now)
       if (status !== 'active') throw new Denied(status, l.id)
 
@@ -96,7 +101,10 @@ async function activate(
         create: { companyId, id: d.deviceId, ...fields, activatedAt: now },
         update: alreadyActive ? fields : { ...fields, activatedAt: now },
       })
-      await tx.license.update({ where: { id: l.id }, data: { lastValidatedAt: now } })
+      await tx.license.update({
+        where: { id: l.id },
+        data: { lastValidatedAt: now, ...(l.activationCodeUsedAt ? {} : codeUse(now, uid, d.deviceId)) },
+      })
       return {
         reactivated: alreadyActive,
         result: {
@@ -164,7 +172,9 @@ export function registerDeviceRoutes(api: Api) {
       path: '/companies/:companyId/license/activate',
       tag: 'Licensing',
       summary: 'Register this phone on the company license with an activation code',
-      description: 'Denials are `409 failed_precondition` with `reason` (invalid_code, expired, device_limit, …). 10 wrong codes per user per hour.',
+      description:
+        'Each code works once: the first successful activation uses it up (a retry by the same user on the same phone still succeeds). ' +
+        'Denials are `409 failed_precondition` with `reason` (invalid_code, code_used, expired, device_limit, …). 10 wrong codes per user per hour.',
       params: Params,
       body: z.object({
         activationCode: shortText(40),

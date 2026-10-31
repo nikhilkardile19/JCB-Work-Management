@@ -78,4 +78,9 @@ abstract final class AppConfig {
 
   /// Minimum password length accepted by the login form.
   static const minPasswordLength = 6;
+
+  /// Minimum length of a new password (sign-up). Matches the server's
+  /// `MIN_PASSWORD_LENGTH`; sign-in keeps [minPasswordLength] for older
+  /// accounts.
+  static const minNewPasswordLength = 8;
 }

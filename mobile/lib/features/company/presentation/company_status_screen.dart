@@ -99,7 +99,7 @@ class _CompanyStatusScreenState extends ConsumerState<CompanyStatusScreen> {
                   Text(
                     suspended
                         ? 'Access for this company has been paused. Records saved on this phone are kept. Contact support to restore access.'
-                        : "Thanks for registering. We'll activate your company once it's reviewed. Tap Check again to refresh.",
+                        : "Thanks for registering. Once your company is approved, we'll email an activation code to the owner. Tap Check again to refresh.",
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),

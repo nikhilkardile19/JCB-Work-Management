@@ -102,7 +102,7 @@ void main() {
       expect(sessionRedirect(SessionError(Exception()), Routes.splash), isNull);
     });
 
-    test('signed out may only see login and password reset', () {
+    test('signed out may only see login, sign-up and password reset', () {
       const s = SessionSignedOut();
       for (final r in [
         Routes.dashboard,
@@ -114,6 +114,7 @@ void main() {
       }
       expect(sessionRedirect(s, Routes.login), isNull);
       expect(sessionRedirect(s, Routes.forgotPassword), isNull);
+      expect(sessionRedirect(s, Routes.signUp), isNull);
     });
 
     test('onboarding states pin their screen', () {

@@ -7,6 +7,7 @@ import {
   type CompanyProfile,
   type Device,
   type License,
+  type LicenseTerms,
   type Member,
   type Page,
   type ReplacementRequest,
@@ -60,6 +61,8 @@ export class FakeAdminApi implements AdminApi {
       validUntil: Date.now() + 100 * DAY,
       maxDevices: 2,
       lastValidatedAt: null,
+      activationCodeUsedAt: null,
+      activationCodeDeviceId: null,
       ...l,
     }
     this.licenses.push(license)
@@ -216,6 +219,21 @@ export class FakeAdminApi implements AdminApi {
     c.status = status
   }
 
+  async approveCompany({ reason, ...input }: LicenseTerms & { companyId: string; reason: string }) {
+    this.require('companies.manage')
+    this.require('licenses.manage')
+    const c = this.companies.find((x) => x.id === input.companyId)!
+    if (c.status !== 'pending') throw new Error('Only a company awaiting approval can be approved.')
+    this.log('company.status', { companyId: c.id, reason, details: { from: 'pending', to: 'active' } })
+    c.status = 'active'
+    return this.createLicense(input)
+  }
+
+  /** Where issued codes are "emailed": the owner's address. */
+  private ownerEmail(companyId: string) {
+    return this.members[companyId]?.find((m) => m.role === 'owner')?.email ?? null
+  }
+
   async createCompany(p: CompanyProfile & { ownerEmail: string }) {
     this.require('companies.manage')
     const { ownerEmail: _, ...profile } = p
@@ -230,13 +248,13 @@ export class FakeAdminApi implements AdminApi {
     this.log('company.update', { companyId, details: { changed: { name: {} } } })
   }
 
-  async createLicense(input: { companyId: string; validFrom: number; validUntil: number; maxDevices: number }) {
+  async createLicense(input: LicenseTerms & { companyId: string }) {
     this.require('licenses.manage')
     const l = this.addLicense(input)
     const activationCode = `JCBW-TEST-CODE-${String(this.seq).padStart(4, '0')}`
     this.issuedCodes.push(activationCode)
     this.log('license.create', { companyId: input.companyId, licenseId: l.id })
-    return { licenseId: l.id, activationCode }
+    return { licenseId: l.id, activationCode, emailedTo: this.ownerEmail(input.companyId) }
   }
 
   async setLicenseStatus(companyId: string, licenseId: string, status: 'active' | 'suspended' | 'revoked', reason: string) {
@@ -260,8 +278,9 @@ export class FakeAdminApi implements AdminApi {
   async rotateActivationCode(companyId: string, licenseId: string, reason: string) {
     this.require('licenses.manage')
     const activationCode = `JCBW-NEWC-ODE0-${String(++this.seq).padStart(4, '0')}`
+    Object.assign((await this.getLicense(companyId, licenseId))!, { activationCodeUsedAt: null, activationCodeDeviceId: null })
     this.log('license.rotate_code', { companyId, licenseId, reason })
-    return { activationCode }
+    return { activationCode, emailedTo: this.ownerEmail(companyId) }
   }
 
   async revokeDevice(companyId: string, deviceId: string, reason: string) {

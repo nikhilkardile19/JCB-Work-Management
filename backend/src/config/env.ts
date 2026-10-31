@@ -19,8 +19,7 @@ const schema = z.object({
   JWT_ISSUER: z.string().default('jcb-api'),
   JWT_AUDIENCE: z.string().default('jcb-clients'),
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
-  /** Mobile sessions slide: every refresh issues a token valid this long. */
-  REFRESH_TOKEN_TTL_DAYS_MOBILE: z.coerce.number().int().min(1).max(365).default(60),
+  /** Portal sessions end this long after sign-in. Mobile sessions never expire. */
   REFRESH_TOKEN_TTL_HOURS_PORTAL: z.coerce.number().int().min(1).max(720).default(12),
   /** A rotated refresh token presented again within this window, while its
    *  successor is still unused, is treated as a retry after a lost response. */

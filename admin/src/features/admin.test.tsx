@@ -32,7 +32,7 @@ describe('dashboard', () => {
 })
 
 describe('companies', () => {
-  it('filters awaiting approval and approves with a reason (audited)', async () => {
+  it('filters awaiting approval; approving issues the license and shows the emailed code once', async () => {
     api.addCompany({ name: 'Patil Constructions', status: 'active' })
     const pending = api.addCompany({ name: 'Shinde Infra' })
     renderSignedIn('/companies?status=pending', api)
@@ -41,14 +41,35 @@ describe('companies', () => {
 
     await user().click(screen.getByRole('link', { name: 'Shinde Infra' }))
     await user().click(await screen.findByRole('button', { name: 'Approve' }))
-    const d = await dialog()
+    const d = within(await screen.findByRole('dialog', { name: 'Approve company' }))
+    expect(d.getByLabelText('Phones allowed')).toHaveValue(2)
     await user().click(d.getByRole('button', { name: 'Approve' }))
     expect(await d.findByText('Enter a reason (at least 3 characters)')).toBeInTheDocument()
     await user().type(d.getByLabelText('Reason'), 'Verified by phone')
     await user().click(d.getByRole('button', { name: 'Approve' }))
-    expect(await screen.findByText('Shinde Infra is now active')).toBeInTheDocument()
+
+    const codeDialog = await screen.findByRole('dialog', { name: 'Activation code' })
+    expect(within(codeDialog).getByText(api.issuedCodes[0])).toBeInTheDocument()
+    expect(codeDialog).toHaveTextContent('Emailed to owner@x.in. The code works once, on one phone.')
+    expect(screen.getByText('Shinde Infra is now active')).toBeInTheDocument()
     expect(api.companies.find((c) => c.id === pending.id)!.status).toBe('active')
-    expect(api.events[0]).toMatchObject({ type: 'company.status', reason: 'Verified by phone' })
+    expect(api.licenses).toEqual([expect.objectContaining({ companyId: pending.id, maxDevices: 2 })])
+    expect(api.events.map((e) => e.type)).toEqual(['license.create', 'company.status'])
+    expect(api.events[1]).toMatchObject({ reason: 'Verified by phone' })
+    await user().click(within(codeDialog).getByRole('button', { name: "I've copied it" }))
+    expect(await screen.findByRole('link', { name: /^LIC/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+  })
+
+  it('says so when the code could not be emailed', async () => {
+    const c = api.addCompany({ name: 'Shinde Infra' })
+    api.members[c.id] = []
+    renderSignedIn(`/companies/${c.id}`, api)
+    await user().click(await screen.findByRole('button', { name: 'Approve' }))
+    const d = await dialog()
+    await user().type(d.getByLabelText('Reason'), 'Verified by phone')
+    await user().click(d.getByRole('button', { name: 'Approve' }))
+    expect(await screen.findByRole('dialog', { name: 'Activation code' })).toHaveTextContent('could not be emailed')
   })
 
   it('searches by name prefix and pages with Load more', async () => {
@@ -134,15 +155,18 @@ describe('licenses', () => {
     expect(l.maxDevices).toBe(3)
   })
 
-  it('a new activation code is shown once', async () => {
+  it('a new activation code replaces a used one and is shown once', async () => {
     const c = api.addCompany({ name: 'Patil', status: 'active' })
-    const l = api.addLicense({ companyId: c.id })
+    const l = api.addLicense({ companyId: c.id, activationCodeUsedAt: Date.now() - 86_400_000, activationCodeDeviceId: 'abcd1234ffff' })
     renderSignedIn(`/licenses/${c.id}/${l.id}`, api)
+    expect(await screen.findByText(/Codes work once: issue a new code to activate another phone/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'phone ABCD1234' })).toHaveAttribute('href', `/devices/${c.id}/abcd1234ffff`)
     await user().click(await screen.findByRole('button', { name: 'Issue new code' }))
     const d = await dialog()
     await user().type(d.getByLabelText('Reason'), 'Owner lost it')
     await user().click(d.getByRole('button', { name: 'Issue new code' }))
     expect(await screen.findByRole('dialog', { name: 'Activation code' })).toHaveTextContent(/JCBW-NEWC/)
+    expect(await screen.findByText('Not used yet. It works once, on one phone.')).toBeInTheDocument()
   })
 })
 
@@ -173,6 +197,13 @@ describe('devices and roles', () => {
     expect(screen.getByText(/Support admin/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull()
+    cleanup()
+    // Approving issues a license, so it needs both grants.
+    api.profile = { ...api.profile, permissions: ['companies.manage'] }
+    renderSignedIn(`/companies/${c.id}`, api)
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    api.profile = { ...api.profile, permissions: ['devices.revoke'] }
     cleanup()
     renderSignedIn(`/licenses/${c.id}/${l.id}`, api)
     await screen.findByText('Terms')

@@ -9,11 +9,15 @@ export interface MailMessage {
 }
 
 export interface Mailer {
+  /** False when messages only reach the log: secrets must not be sent through it. */
+  readonly delivers: boolean
   send(message: MailMessage): Promise<void>
 }
 
 /** Development fallback: writes the message (including links) to the log. */
 export class LogMailer implements Mailer {
+  readonly delivers = false
+
   constructor(private readonly logger: Logger) {}
 
   async send(message: MailMessage) {
@@ -23,6 +27,7 @@ export class LogMailer implements Mailer {
 
 /** Tests read sent messages from here. */
 export class MemoryMailer implements Mailer {
+  readonly delivers = true
   readonly sent: MailMessage[] = []
 
   async send(message: MailMessage) {
@@ -39,6 +44,7 @@ export function createMailer(config: Config, logger: Logger): Mailer {
     auth: config.SMTP_USER ? { user: config.SMTP_USER, pass: config.SMTP_PASSWORD } : undefined,
   })
   return {
+    delivers: true,
     async send({ to, subject, text }) {
       await transport.sendMail({ from: config.MAIL_FROM, to, subject, text })
     },

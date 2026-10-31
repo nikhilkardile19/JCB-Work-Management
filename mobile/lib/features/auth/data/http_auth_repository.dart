@@ -1,6 +1,8 @@
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/session_store.dart';
+import '../../company/data/company_remote_source.dart';
+import '../../company/domain/company.dart';
 import 'auth_repository.dart';
 
 /// Email + password sign-in against the REST API (`/auth/*`).
@@ -33,6 +35,32 @@ class HttpAuthRepository implements AuthRepository {
       return _toUser(session.user)!;
     } catch (e) {
       throw AuthException(messageFor(e));
+    }
+  }
+
+  @override
+  Future<void> signUp({
+    required String email,
+    required String password,
+    required CompanyProfile profile,
+  }) async {
+    try {
+      await _api.post(
+        '/auth/signup',
+        body: {
+          'email': email.trim(),
+          'password': password,
+          'company': companyProfileBody(profile),
+        },
+        authenticated: false,
+      );
+    } catch (e) {
+      throw AuthException(switch (e) {
+        ApiException(reason: 'email_taken') => 'An account with this email already exists. Sign in, or reset your password.',
+        ApiException(code: 'invalid_argument') =>
+          'Some details were not accepted. Check them and try again.',
+        _ => messageFor(e),
+      });
     }
   }
 

@@ -4,7 +4,7 @@ import { Async, DataTable, DefinitionList, StatusBadge } from '../../components/
 import { CodeDialog, ReasonDialog } from '../../components/dialogs'
 import { Icon } from '../../components/Icon'
 import { Button, Card, EmptyState, PageHeader } from '../../components/ui'
-import { useAdminApi, type Company, type CompanyStatus } from '../../lib/adminApi'
+import { useAdminApi, type Company, type CompanyStatus, type IssuedCode } from '../../lib/adminApi'
 import { useAdminProfile } from '../../lib/adminProfile'
 import { daysUntil, fmtDate, fmtDateTime, shortId } from '../../lib/format'
 import { useAsync } from '../../lib/hooks'
@@ -14,7 +14,8 @@ import { NewLicenseDialog } from '../licenses/NewLicenseDialog'
 import { CompanyForm } from './CompanyForm'
 
 const STATUS_ACTIONS: Record<CompanyStatus, { to: CompanyStatus; label: string; danger?: boolean; message: string }[]> = {
-  pending: [{ to: 'active', label: 'Approve', message: 'The company can use the app once a license is issued.' }],
+  // Approving also issues the license and its code (see the Approve button).
+  pending: [],
   active: [{ to: 'suspended', label: 'Suspend', danger: true, message: 'Members keep their data but cannot sync or activate phones until reactivated.' }],
   suspended: [{ to: 'active', label: 'Reactivate', message: 'Members can sync and activate phones again.' }],
 }
@@ -32,7 +33,8 @@ export function CompanyDetailPage() {
   const [statusChange, setStatusChange] = useState<(typeof STATUS_ACTIONS)['active'][number] | null>(null)
   const [editing, setEditing] = useState(false)
   const [newLicense, setNewLicense] = useState(false)
-  const [code, setCode] = useState<string | null>(null)
+  const [approving, setApproving] = useState(false)
+  const [issued, setIssued] = useState<IssuedCode | null>(null)
   const refresh = () => [company, licenses, events].forEach((s) => s.reload())
 
   return (
@@ -51,6 +53,9 @@ export function CompanyDetailPage() {
               actions={
                 <div className="actions-row">
                   <StatusBadge status={c.status} />
+                  {c.status === 'pending' && can('companies.manage') && can('licenses.manage') && (
+                    <Button onClick={() => setApproving(true)}>Approve</Button>
+                  )}
                   {can('companies.manage') &&
                     STATUS_ACTIONS[c.status].map((a) => (
                       <Button key={a.to} variant={a.danger ? 'danger' : 'primary'} onClick={() => setStatusChange(a)}>
@@ -126,7 +131,7 @@ export function CompanyDetailPage() {
                       <EmptyState
                         icon="key"
                         title="No license yet"
-                        message={c.status === 'active' ? 'Create a license and give the activation code to the owner.' : 'Approve the company before issuing a license.'}
+                        message={c.status === 'active' ? 'Create a license; its activation code is emailed to the owner.' : 'Approving the company issues its license.'}
                       />
                     }
                   />
@@ -185,17 +190,19 @@ export function CompanyDetailPage() {
                 }}
               />
             )}
-            {newLicense && (
+            {(newLicense || approving) && (
               <NewLicenseDialog
                 companyId={c.id}
-                onClose={() => setNewLicense(false)}
-                onCreated={(activationCode) => {
-                  setCode(activationCode)
+                approve={approving}
+                onClose={() => (setNewLicense(false), setApproving(false))}
+                onCreated={(i) => {
+                  setIssued(i)
+                  if (approving) toast(`${c.name} is now active`)
                   refresh()
                 }}
               />
             )}
-            {code && <CodeDialog code={code} onClose={() => setCode(null)} />}
+            {issued && <CodeDialog code={issued.activationCode} emailedTo={issued.emailedTo} onClose={() => setIssued(null)} />}
           </>
         )
       }

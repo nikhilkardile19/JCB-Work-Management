@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jcb_work_management/core/network/session_store.dart';
 import 'package:jcb_work_management/features/auth/data/auth_repository.dart';
 import 'package:jcb_work_management/features/auth/data/http_auth_repository.dart';
+import 'package:jcb_work_management/features/company/domain/company.dart';
 
 import '../helpers/fake_http.dart';
 
@@ -103,6 +105,83 @@ void main() {
       await messageFor((r) => const FakeReply(200, {'unexpected': true})),
       'Something went wrong. Please try again.',
     );
+  });
+
+  test('mobile sessions without an end date are accepted', () {
+    final session = AuthSession.fromJson({
+      ...sessionJson(),
+      'refreshTokenExpiresAt': null,
+    });
+    expect(session.refreshTokenExpiresAt, isNull);
+    expect(session.refreshToken, 'r1');
+  });
+
+  group('signUp', () {
+    const profile = CompanyProfile(
+      name: 'Sai Earthmovers',
+      contactPerson: 'Ravi Patil',
+      phone: '9876543210',
+      address: 'Plot 4, MIDC Bhosari, Pune',
+      invoicePrefix: 'SAI',
+    );
+
+    Future<void> signUp() => auth.signUp(
+      email: ' new@saiearth.in ',
+      password: 'secret123',
+      profile: profile,
+    );
+
+    test('creates the account and company without signing in', () async {
+      setUpWith(
+        (r) => const FakeReply(201, {'userId': 'u9', 'companyId': 'c9'}),
+      );
+      await signUp();
+      final request = h.http.requests.single;
+      expect(request.path, '/auth/signup');
+      expect(request.bearer, isNull);
+      expect(request.json, {
+        'email': 'new@saiearth.in',
+        'password': 'secret123',
+        'company': {
+          'name': 'Sai Earthmovers',
+          'contactPerson': 'Ravi Patil',
+          'phone': '9876543210',
+          'address': 'Plot 4, MIDC Bhosari, Pune',
+          'invoicePrefix': 'SAI',
+          'email': null,
+          'gstin': null,
+        },
+      });
+      expect(h.secrets.values, isEmpty);
+      expect(await auth.authStateChanges().first, isNull);
+    });
+
+    test('failures are AuthExceptions with a useful message', () async {
+      Future<String> messageFor(FakeHandler handler) async {
+        setUpWith(handler);
+        try {
+          await signUp();
+        } on AuthException catch (e) {
+          return e.message;
+        }
+        fail('expected AuthException');
+      }
+
+      expect(
+        await messageFor(
+          (r) => FakeReply.error(409, 'already_exists', reason: 'email_taken'),
+        ),
+        'An account with this email already exists. Sign in, or reset your password.',
+      );
+      expect(
+        await messageFor((r) => FakeReply.error(400, 'invalid_argument')),
+        contains('Check them'),
+      );
+      expect(
+        await messageFor((r) => throw const Offline()),
+        'No internet connection. Connect and try again.',
+      );
+    });
   });
 
   test(

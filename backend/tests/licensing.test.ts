@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { generateActivationCode, hashCode, normalizeCode } from '../src/modules/licenses/activationCodes.js'
+import { freshCode } from '../src/modules/licenses/licenseRules.js'
 import { apiAs, createAdmin } from './helpers/api.js'
 import { createUser, DAY, seedCompany } from './helpers/factories.js'
 import { useTestApp } from './helpers/testApp.js'
@@ -13,6 +14,8 @@ const activate = (uid: string, deviceId: string, code = CODE, company = 'co') =>
   as(uid, 'post', `/companies/${company}/license/activate`, { activationCode: code, deviceId, deviceModel: 'Pixel 8' })
 const validate = (uid: string, deviceId: string, company = 'co') => as(uid, 'post', `/companies/${company}/license/validate`, { deviceId })
 const devices = () => env.db.device.count({ where: { companyId: 'co', status: 'active' } })
+/** Codes work once: makes the license's code usable again, as when support issues a new one. */
+const newCode = (code = CODE) => env.db.license.update({ where: { id: 'lic-co' }, data: freshCode(hashCode(code)) })
 
 beforeEach(async () => {
   await seedCompany(env.db, { maxDevices: 2, devices: false, activationCode: CODE })
@@ -39,18 +42,48 @@ describe('activate', () => {
     expect(types).toEqual(['device.activate', 'device.revalidate'])
   })
 
-  it('enforces the device limit on the server', async () => {
+  it('a code works once; only the phone that used it may retry', async () => {
+    expect((await activate('op', 'phone-1')).status).toBe(200)
+    expect(await env.db.license.findUniqueOrThrow({ where: { id: 'lic-co' } })).toMatchObject({
+      activationCodeUsedBy: 'op',
+      activationCodeDeviceId: 'phone-1',
+    })
+    // A lost response: the same user on the same phone tries again.
+    expect((await activate('op', 'phone-1')).status).toBe(200)
+    for (const [uid, phone] of [['op2', 'phone-2'], ['op', 'phone-2'], ['op2', 'phone-1']]) {
+      const res = await activate(uid, phone)
+      expect(res.status).toBe(409)
+      expect(res.body.error).toMatchObject({ code: 'failed_precondition', reason: 'code_used' })
+    }
+    expect(await devices()).toBe(1)
+    // Support issues a new code for the next phone.
+    await newCode()
+    expect((await activate('op2', 'phone-2')).status).toBe(200)
+  })
+
+  it('a used code does not count as a wrong guess', async () => {
     await activate('op', 'phone-1')
+    for (let i = 0; i < 12; i++) expect((await activate('op2', 'phone-2')).body.error.reason).toBe('code_used')
+    await newCode()
+    expect((await activate('op2', 'phone-2')).status).toBe(200)
+  })
+
+  it('enforces the device limit on the server, without using up the code', async () => {
+    await activate('op', 'phone-1')
+    await newCode()
     await activate('op2', 'phone-2')
+    await newCode()
     const res = await activate('mgr', 'phone-3')
     expect(res.status).toBe(409)
     expect(res.body.error).toMatchObject({ code: 'failed_precondition', reason: 'device_limit' })
+    expect((await env.db.license.findUniqueOrThrow({ where: { id: 'lic-co' } })).activationCodeUsedAt).toBeNull()
   })
 
-  it('concurrent activations never exceed the limit', async () => {
+  it('concurrent activations with one code register one phone', async () => {
     const results = await Promise.all(['a', 'b', 'c', 'd', 'e'].map((d) => activate('op', `phone-${d}`)))
-    expect(results.filter((r) => r.status === 200)).toHaveLength(2)
-    expect(await devices()).toBe(2)
+    expect(results.filter((r) => r.status === 200)).toHaveLength(1)
+    expect(results.filter((r) => r.body.error?.reason === 'code_used')).toHaveLength(4)
+    expect(await devices()).toBe(1)
   })
 
   it('denies wrong codes, codes of another company, and non-members', async () => {
@@ -157,7 +190,9 @@ describe('device replacement', () => {
   beforeEach(async () => {
     await createAdmin(env, 'dev-super')
     await activate('op', 'old-1')
+    await newCode()
     await activate('op2', 'old-2')
+    await newCode()
   })
 
   it('the full license refuses activation; the new phone files a request instead', async () => {
@@ -172,6 +207,15 @@ describe('device replacement', () => {
     expect((await request('op', 'new-1')).body.requestId).toBe(first.body.requestId)
     expect((await request('op', 'new-2', { activationCode: 'JCBW-XXXX-XXXX-XXXX' })).body.error.reason).toBe('invalid_code')
     expect((await request('op', 'new-2', { reason: 'x' })).status).toBe(400)
+  })
+
+  it('filing a request uses up the code, even if the request is rejected', async () => {
+    const { requestId } = (await request('op', 'new-1')).body
+    expect((await request('op2', 'new-2')).body.error.reason).toBe('code_used')
+    await env.db.license.update({ where: { id: 'lic-co' }, data: { maxDevices: 3 } })
+    expect((await activate('op2', 'new-2')).body.error.reason).toBe('code_used')
+    await review('dev-super', requestId, { decision: 'reject' })
+    expect((await activate('op2', 'new-2')).body.error.reason).toBe('code_used')
   })
 
   it('an already-active phone needs nothing; a revoked phone must reinstall', async () => {
@@ -213,6 +257,7 @@ describe('device replacement', () => {
   it('two approvals racing for the last slot cannot both win', async () => {
     await env.db.license.update({ where: { id: 'lic-co' }, data: { maxDevices: 3 } })
     const a = (await request('op', 'new-a')).body.requestId
+    await newCode()
     const b = (await request('op2', 'new-b')).body.requestId
     const results = await Promise.all([review('dev-super', a, { decision: 'approve' }), review('dev-super', b, { decision: 'approve' })])
     expect(results.map((r) => r.status).sort()).toEqual([200, 409])
@@ -239,10 +284,12 @@ describe('device replacement', () => {
 
   it('limits new requests per user per day; repeating a pending one is free', async () => {
     for (let i = 0; i < 5; i++) {
+      await newCode()
       const r = await request('op', `n-${i}`)
       expect(r.status).toBe(200)
       await env.db.deviceReplacementRequest.update({ where: { id: r.body.requestId }, data: { status: 'rejected' } })
     }
+    await newCode()
     expect((await request('op', 'n-9')).status).toBe(429)
   })
 })

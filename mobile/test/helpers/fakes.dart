@@ -24,6 +24,10 @@ class FakeAuthRepository implements AuthRepository {
   String? get currentUid => _user?.uid;
   String? lastResetEmail;
 
+  /// Emails [signUp] refuses as already registered.
+  final takenEmails = <String>{};
+  ({String email, String password, CompanyProfile profile})? lastSignUp;
+
   static AppUser userFor(String email) =>
       AppUser(uid: 'uid-$email', email: email);
 
@@ -44,6 +48,21 @@ class FakeAuthRepository implements AuthRepository {
     _user = userFor(email.trim().toLowerCase());
     _changes.add(_user);
     return _user!;
+  }
+
+  @override
+  Future<void> signUp({
+    required String email,
+    required String password,
+    required CompanyProfile profile,
+  }) async {
+    final key = email.trim().toLowerCase();
+    if (takenEmails.contains(key)) {
+      throw const AuthException(
+        'An account with this email already exists. Sign in, or reset your password.',
+      );
+    }
+    lastSignUp = (email: key, password: password, profile: profile);
   }
 
   @override

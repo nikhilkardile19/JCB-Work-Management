@@ -78,7 +78,7 @@ transaction. Refusals return `resource-exhausted` with
 
 | Limit | Key | Why |
 |-------|-----|-----|
-| 10 wrong activation codes per hour | user | Codes have 60 bits of entropy, so guessing is already impractical; the limit stops scripted attempts and bounds cost. Successful activations and re-validations don't count. |
+| 10 wrong activation codes per hour | user | Codes have 60 bits of entropy, so guessing is already impractical; the limit stops scripted attempts and bounds cost. Successful activations and re-validations don't count, nor do codes already used (each code works once). |
 | 5 new replacement requests per day | user | Stops flooding the developer's review queue. Repeating a pending request is free. |
 | 30 users added per day | company | Each invitation can create a sign-in account. |
 
@@ -181,6 +181,8 @@ refusal logs include the App Check app ID for monitoring.
 
 | Risk | Why accepted | Revisit |
 |---|---|---|
+| Mobile refresh tokens never expire (product decision #20). | Stored only in Keystore-backed storage excluded from backups, rotated on every use, reuse detection ends the session; password reset and disabling the account revoke it. | If a phone is lost: disable the user or reset the password (ends every session). |
+| Sign-up is open to anyone (product decision #19). | A sign-up only creates an account and a `pending` company: nothing can be synced or activated until a developer admin approves and issues a one-time code. 20 sign-ups per IP per hour. | If abused: CAPTCHA or email verification. |
 | Portal refresh token in `sessionStorage` (readable by script in that tab). | Strict CSP (`script-src 'self'`), per-tab session, 12 h absolute lifetime, rotation + reuse detection; an httpOnly cookie needs same-site hosting. Firebase stored its tokens in IndexedDB, so this is no weaker. | When the portal and API share a site: move to an httpOnly `SameSite=Strict` cookie. |
 | "Duplicate tab" copies `sessionStorage`; the second tab's refresh looks like reuse and signs both out. | Fails safe. | — |
 | An email can be locked out for 15 minutes by 10 wrong passwords. | Same trade-off as Firebase's `too-many-requests`. | If abused: add CAPTCHA after failures. |

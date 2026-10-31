@@ -17,7 +17,7 @@ import '../../splash/brand_mark.dart';
 import '../application/license_controller.dart';
 import '../data/license_service.dart';
 
-/// One-time, online activation of this phone with the company's code.
+/// One-time, online activation of this phone with a single-use code.
 class ActivationScreen extends ConsumerStatefulWidget {
   const ActivationScreen({super.key});
 
@@ -98,8 +98,8 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
                   ),
                   const SizedBox(height: AppSpace.sm),
                   Text(
-                    'Enter the activation code for ${company ?? 'your company'}\'s JCB Works license. '
-                    'This is needed once per phone and requires internet.',
+                    'Enter the activation code for ${company ?? 'your company'}. '
+                    'We email it to the company owner on approval. Each code works once, on one phone, and activation needs internet.',
                     style: theme.textTheme.bodyLarge?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),

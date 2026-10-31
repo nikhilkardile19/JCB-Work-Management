@@ -44,7 +44,8 @@ implementations plus a new backend.
   detection (a replayed token ends the session) and a 60-second grace
   window for responses lost on mobile networks.
 - Mobile sessions slide (60 days) so offline-first users stay signed in;
-  portal sessions end 12 hours after sign-in.
+  portal sessions end 12 hours after sign-in. *Updated 2026-10-31: mobile
+  sessions never expire (product decision #20).*
 - Roles, membership, company status, device and license state are read from
   PostgreSQL on every request — never from tokens or clients.
 - Password reset by single-use emailed link (60 minutes) to the portal's

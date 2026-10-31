@@ -74,6 +74,9 @@ flutter:
   assets:
     - assets/fonts/NotoSans-Regular.ttf
     - assets/fonts/NotoSans-Bold.ttf
+    # Launch artwork. Generated from assets/images/jcb_icon.png (not bundled),
+    # as are the Android launcher icon and launch screen.
+    - assets/images/splash.webp
 
   # To add assets to your application, add an assets section, like this:
   # assets:

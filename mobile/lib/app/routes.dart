@@ -5,6 +5,7 @@ abstract final class Routes {
   static const splash = '/splash';
   static const login = '/login';
   static const forgotPassword = '/login/forgot';
+  static const signUp = '/login/signup';
   static const companySetup = '/setup/company';
   static const selectCompany = '/setup/select-company';
   static const companyStatus = '/setup/status';
@@ -51,6 +52,7 @@ abstract final class Routes {
     splash,
     login,
     forgotPassword,
+    signUp,
     companySetup,
     selectCompany,
     companyStatus,

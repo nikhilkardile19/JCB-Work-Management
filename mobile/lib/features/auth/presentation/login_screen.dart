@@ -140,6 +140,22 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         loading: _submitting,
                         onPressed: _submit,
                       ),
+                      const SizedBox(height: AppSpace.lg),
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            'New to JCB Works?',
+                            style: theme.textTheme.bodyMedium,
+                          ),
+                          TextButton(
+                            key: const Key('login_sign_up'),
+                            onPressed: () => context.go(Routes.signUp),
+                            child: const Text('Create an account'),
+                          ),
+                        ],
+                      ),
                       if (offline) ...[
                         const SizedBox(height: AppSpace.lg),
                         Text(

@@ -38,6 +38,22 @@ export interface License {
   validUntil: number
   maxDevices: number
   lastValidatedAt: number | null
+  /** Codes work once: when the current code was used, and by which phone. */
+  activationCodeUsedAt: number | null
+  activationCodeDeviceId: string | null
+}
+
+/** A new activation code: shown once, and emailed to the owner when email is set up. */
+export interface IssuedCode {
+  activationCode: string
+  /** Null when it was not emailed; the admin passes it on. */
+  emailedTo: string | null
+}
+
+export interface LicenseTerms {
+  validFrom: number
+  validUntil: number
+  maxDevices: number
 }
 
 export interface Device {
@@ -129,12 +145,14 @@ export interface AdminApi {
   listEvents(q: { companyId?: string; licenseId?: string; deviceId?: string; type?: string; after?: Cursor }): Promise<Page<AuditEvent>>
 
   setCompanyStatus(companyId: string, status: CompanyStatus, reason: string): Promise<void>
+  /** Activates a pending company and issues its license in one step. */
+  approveCompany(input: LicenseTerms & { companyId: string; reason: string }): Promise<IssuedCode & { licenseId: string }>
   createCompany(profile: CompanyProfile & { ownerEmail: string }): Promise<{ companyId: string; newUser: boolean }>
   updateCompany(companyId: string, profile: CompanyProfile): Promise<void>
-  createLicense(input: { companyId: string; validFrom: number; validUntil: number; maxDevices: number }): Promise<{ licenseId: string; activationCode: string }>
+  createLicense(input: LicenseTerms & { companyId: string }): Promise<IssuedCode & { licenseId: string }>
   setLicenseStatus(companyId: string, licenseId: string, status: 'active' | 'suspended' | 'revoked', reason: string): Promise<void>
   updateLicense(companyId: string, licenseId: string, changes: { validUntil?: number; maxDevices?: number }, reason: string): Promise<void>
-  rotateActivationCode(companyId: string, licenseId: string, reason: string): Promise<{ activationCode: string }>
+  rotateActivationCode(companyId: string, licenseId: string, reason: string): Promise<IssuedCode>
   revokeDevice(companyId: string, deviceId: string, reason: string): Promise<void>
   /** Approve (optionally revoking [revokeDeviceId]) or reject. */
   reviewReplacement(input: { companyId: string; requestId: string; decision: 'approve' | 'reject'; reason: string; revokeDeviceId?: string }): Promise<void>

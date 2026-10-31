@@ -8,7 +8,7 @@ import { requireAdmin } from '../admin/adminAccess.js'
 import { recordEvent } from '../audit/auditEvents.js'
 import { requireActiveMember, requireMember } from '../companies/access.js'
 import { hashCode } from '../licenses/activationCodes.js'
-import { countActiveDevices, effectiveStatus, lockLicense } from '../licenses/licenseRules.js'
+import { CODE_USED_MESSAGE, codeUsableBy, codeUse, countActiveDevices, effectiveStatus, lockLicense } from '../licenses/licenseRules.js'
 import { assertWithinLimit, consume, LIMITS } from '../rate-limits/rateLimit.js'
 
 /**
@@ -31,14 +31,17 @@ async function requestReplacement(
   const codeKey = `codeFailures_${uid}`
   await assertWithinLimit(ctx.db, codeKey, LIMITS.codeFailures, now)
 
-  // The activation code proves the requester was given access by the company.
+  // The activation code proves the requester was given access. Filing a
+  // request uses it up, like an activation.
+  const codeHash = hashCode(d.activationCode)
   const license = await ctx.db.license.findUnique({
-    where: { companyId_activationCodeHash: { companyId, activationCodeHash: hashCode(d.activationCode) } },
+    where: { companyId_activationCodeHash: { companyId, activationCodeHash: codeHash } },
   })
   if (!license) {
     await consume(ctx.db, codeKey, LIMITS.codeFailures, now)
     throw precondition('That activation code is not valid for this company.', 'invalid_code')
   }
+  if (!codeUsableBy(license, uid, d.newDeviceId)) throw precondition(CODE_USED_MESSAGE, 'code_used')
   const status = effectiveStatus(license.status, license.validFrom, license.validUntil, now)
   if (status !== 'active') throw precondition(`The license is ${status.replace('_', ' ')}.`, status)
 
@@ -54,6 +57,14 @@ async function requestReplacement(
   if (open) return { requestId: open.id, status: 'pending' as const }
 
   await consume(ctx.db, `replacementRequests_${uid}`, LIMITS.replacementRequests, now)
+  if (!license.activationCodeUsedAt) {
+    const claimed = await ctx.db.license.updateMany({
+      where: { id: license.id, activationCodeHash: codeHash, activationCodeUsedAt: null },
+      data: codeUse(now, uid, d.newDeviceId),
+    })
+    // Another phone used (or support replaced) the code in the meantime.
+    if (claimed.count !== 1) throw precondition(CODE_USED_MESSAGE, 'code_used')
+  }
   const id = newId()
   try {
     await ctx.db.deviceReplacementRequest.create({

@@ -18,6 +18,8 @@ class CompanyProfileForm extends ConsumerStatefulWidget {
     required this.submitLabel,
     required this.onSubmit,
     this.initial,
+    this.leading = const [],
+    this.errorMessage,
   });
 
   final CompanyProfile? initial;
@@ -25,6 +27,12 @@ class CompanyProfileForm extends ConsumerStatefulWidget {
 
   /// Throws to show an error message under the form.
   final Future<void> Function(CompanyProfile profile) onSubmit;
+
+  /// Extra fields above the profile, validated with it (sign-up account).
+  final List<Widget> leading;
+
+  /// Message for a failed [onSubmit]; a generic connection message if null.
+  final String Function(Object error)? errorMessage;
 
   @override
   ConsumerState<CompanyProfileForm> createState() => _CompanyProfileFormState();
@@ -85,10 +93,10 @@ class _CompanyProfileFormState extends ConsumerState<CompanyProfileForm> {
           invoicePrefix: _prefix.text.trim().toUpperCase(),
         ),
       );
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         setState(
-          () => _error = "Couldn't save the company profile. Check your connection and try again.",
+          () => _error = widget.errorMessage?.call(e) ?? "Couldn't save the company profile. Check your connection and try again.",
         );
       }
     } finally {
@@ -107,6 +115,7 @@ class _CompanyProfileFormState extends ConsumerState<CompanyProfileForm> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          ...widget.leading,
           const SectionHeader('Business'),
           AppTextField(
             key: const Key('company_name'),

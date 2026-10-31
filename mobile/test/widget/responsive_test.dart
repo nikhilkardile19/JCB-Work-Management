@@ -31,6 +31,10 @@ void main() {
         setView(tester);
         await pumpApp(tester);
         expect(tester.takeException(), isNull, reason: 'login');
+        await tapAndSettle(tester, find.byKey(const Key('login_sign_up')));
+        await scrollTo(tester, find.byKey(const Key('signup_email')));
+        await scrollTo(tester, find.byKey(const Key('company_submit')));
+        expect(tester.takeException(), isNull, reason: 'sign-up');
         await unmount(tester);
 
         await pumpApp(tester, harness: TestHarness.signedIn());

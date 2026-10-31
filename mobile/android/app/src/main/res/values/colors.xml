@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- AppTheme.dark() surface, so the launch screen hands over to the
+         Flutter splash (lib/features/splash/splash_screen.dart) seamlessly. -->
+    <color name="splash_background">#141517</color>
+    <color name="ic_launcher_background">#141517</color>
+</resources>

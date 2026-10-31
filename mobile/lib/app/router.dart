@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../core/config/app_config.dart';
 import '../features/auth/presentation/forgot_password_screen.dart';
 import '../features/auth/presentation/login_screen.dart';
+import '../features/auth/presentation/sign_up_screen.dart';
 import '../features/billing/presentation/billing_screen.dart';
 import '../features/billing/presentation/invoice_builder_screen.dart';
 import '../features/billing/presentation/invoice_detail_screen.dart';
@@ -47,6 +48,9 @@ import '../features/work/presentation/work_log_form_screen.dart';
 import '../features/work/presentation/work_logs_screen.dart';
 import 'routes.dart';
 
+/// Screens reachable without signing in.
+const _signedOutRoutes = {Routes.login, Routes.forgotPassword, Routes.signUp};
+
 /// Pure redirect decision so the guard can be unit-tested. [license] is
 /// null while the cached license state is loading.
 String? sessionRedirect(
@@ -59,9 +63,7 @@ String? sessionRedirect(
     // Splash shows progress, or the error with a retry.
     SessionLoading() || SessionError() => only(Routes.splash),
     SessionSignedOut() =>
-      location == Routes.login || location == Routes.forgotPassword
-          ? null
-          : Routes.login,
+      _signedOutRoutes.contains(location) ? null : Routes.login,
     SessionNeedsCompany() => only(Routes.companySetup),
     SessionPickCompany() => only(Routes.selectCompany),
     SessionPendingApproval() ||
@@ -107,6 +109,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: 'forgot',
             builder: (_, _) => const ForgotPasswordScreen(),
           ),
+          GoRoute(path: 'signup', builder: (_, _) => const SignUpScreen()),
         ],
       ),
       GoRoute(

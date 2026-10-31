@@ -13,6 +13,8 @@ export const LicenseOut = z
     validUntil: z.number().int(),
     maxDevices: z.number().int(),
     lastValidatedAt: z.number().int().nullable(),
+    activationCodeUsedAt: z.number().int().nullable().openapi({ description: 'When the current code was used (codes work once); null while unused' }),
+    activationCodeDeviceId: z.string().nullable(),
   })
   .openapi('License')
 
@@ -25,6 +27,8 @@ export const licenseOut = (l: License & { company?: { name: string } | null }): 
   validUntil: l.validUntil.getTime(),
   maxDevices: l.maxDevices,
   lastValidatedAt: ms(l.lastValidatedAt),
+  activationCodeUsedAt: ms(l.activationCodeUsedAt),
+  activationCodeDeviceId: l.activationCodeDeviceId,
 })
 
 export const DeviceOut = z

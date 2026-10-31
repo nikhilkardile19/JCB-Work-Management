@@ -4,7 +4,7 @@ import { Async, DataTable, DefinitionList, StatusBadge } from '../../components/
 import { ActionDialog, CodeDialog, ReasonDialog } from '../../components/dialogs'
 import { Icon } from '../../components/Icon'
 import { Button, Card, EmptyState, PageHeader, TextField } from '../../components/ui'
-import { useAdminApi, type License } from '../../lib/adminApi'
+import { useAdminApi, type IssuedCode, type License } from '../../lib/adminApi'
 import { useAdminProfile } from '../../lib/adminProfile'
 import { daysUntil, fmtDate, fmtDateTime, fromDateInput, shortId, toDateInput } from '../../lib/format'
 import { useAsync } from '../../lib/hooks'
@@ -32,7 +32,7 @@ export function LicenseDetailPage() {
   const devices = useAsync(async () => (await api.listDevices({ companyId, licenseId })).items, [api, companyId, licenseId])
   const events = useAsync(async () => (await api.listEvents({ licenseId })).items, [api, licenseId])
   const [dialog, setDialog] = useState<Dialog | null>(null)
-  const [code, setCode] = useState<string | null>(null)
+  const [issued, setIssued] = useState<IssuedCode | null>(null)
   const [until, setUntil] = useState('')
   const [maxDevices, setMaxDevices] = useState('')
   const [reason, setReason] = useState('')
@@ -94,6 +94,20 @@ export function LicenseDetailPage() {
                 <div className="card-head">
                   <h2>Activation code</h2>
                 </div>
+                {l.activationCodeUsedAt ? (
+                  <p>
+                    Used {fmtDateTime(l.activationCodeUsedAt)}
+                    {l.activationCodeDeviceId && (
+                      <>
+                        {' '}
+                        by <Link to={`/devices/${l.companyId}/${l.activationCodeDeviceId}`}>phone {shortId(l.activationCodeDeviceId)}</Link>
+                      </>
+                    )}
+                    . Codes work once: issue a new code to activate another phone.
+                  </p>
+                ) : (
+                  <p>Not used yet. It works once, on one phone.</p>
+                )}
                 <p>Only a fingerprint of the code is stored, so it cannot be shown again. Issue a new code if the owner lost it or it was shared.</p>
                 {manage && l.status !== 'revoked' && (
                   <Button variant="secondary" onClick={() => setDialog({ kind: 'rotate' })}>
@@ -146,8 +160,7 @@ export function LicenseDetailPage() {
                 submitLabel="Issue new code"
                 onClose={() => setDialog(null)}
                 onConfirm={async (r) => {
-                  const { activationCode } = await api.rotateActivationCode(l.companyId, l.id, r)
-                  setCode(activationCode)
+                  setIssued(await api.rotateActivationCode(l.companyId, l.id, r))
                   refresh()
                 }}
               />
@@ -173,7 +186,7 @@ export function LicenseDetailPage() {
                 <TextField label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} hint="Kept in the license history." />
               </ActionDialog>
             )}
-            {code && <CodeDialog code={code} onClose={() => setCode(null)} />}
+            {issued && <CodeDialog code={issued.activationCode} emailedTo={issued.emailedTo} onClose={() => setIssued(null)} />}
           </>
         )
       }
